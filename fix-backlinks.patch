@@ -1,0 +1,154 @@
+--- packages/app-core/src/workspace-sidebars.tsx
++++ packages/app-core/src/workspace-sidebars.tsx
+@@ -932,152 +932,24 @@
+       </SidebarPane>
+     );
+   }
+   if (pane === "backlinks") {
+-    const activeTitle = activeDocument?.path ?? activeDocument?.title ?? "Untitled";
+-    
+-    const titleFromPath = (path: string) => {
+-      return path.split("/").pop()?.replace(/\.(md|markdown)$/i, "") ?? path;
+-    };
+-
+-    const highlightQuery = (text: string, query: string) => {
+-      if (!text) return null;
+-      const cleanTarget = query.split("/").pop()?.replace(/\.(md|markdown)$/i, "") ?? query;
+-      const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+-      const targetEsc = escapeRegExp(cleanTarget);
+-
+-      const linkPattern = new RegExp(
+-        `(\\[\\[[^\\]]*${targetEsc}[^\\]]*\\]\\]|\\[[^\\]]+\\]\\([^)]*${targetEsc}[^)]*\\)|${targetEsc})`,
+-        "gi"
+-      );
+-
+-      const parts = text.split(linkPattern);
+-
+-      return (
+-        <span>
+-          {parts.map((part, idx) =>
+-            linkPattern.test(part) ? (
+-              <mark
+-                key={idx}
+-                className="inline rounded border border-[#a68a26]/60 bg-[#685512]/40 px-1 py-0.5 font-mono text-[11px] font-medium text-[#ffe57f] shadow-xs"
+-              >
+-                {part}
+-              </mark>
+-            ) : (
+-              <span key={idx}>{part}</span>
+-            )
+-          )}
+-        </span>
+-      );
+-    };
+-
+-    const groupMentions = (mentions: DocumentMention[]) => {
+-      const grouped = new Map<string, DocumentMention[]>();
+-      for (const mention of mentions) {
+-        const matchesFilter = `${mention.source} ${mention.excerpt}`
+-          .toLocaleLowerCase()
+-          .includes(filter.toLocaleLowerCase());
+-        if (!matchesFilter) continue;
+-        const group = grouped.get(mention.source) ?? [];
+-        group.push(mention);
+-        grouped.set(mention.source, group);
+-      }
+-      return [...grouped].sort(([left, leftMentions], [right, rightMentions]) => {
+-        if (sortByCount) {
+-          const compareCounts = rightMentions.length - leftMentions.length;
+-          return descending ? -compareCounts : compareCounts;
+-        }
+-        return descending ? right.localeCompare(left) : left.localeCompare(right);
+-      });
+-    };
+-
+-    // decoupled performance: raw backlink indexing only runs when activeTitle/refreshTrigger/storeVersion changes
+-    const storeVersion = useSyncExternalStore(
+-      (onStoreChange) => globalBacklinkStore.subscribe(onStoreChange),
+-      () => globalBacklinkStore.getCacheVersion()
+-    );
+-
+-    const rawLinkedMentions = useMemo(() => {
+-      return globalBacklinkStore.getLinkedMentions(activeTitle);
+-    }, [activeTitle, refreshTrigger, storeVersion]);
+-
+-    const rawUnlinkedMentions = useMemo(() => {
+-      if (!activeDocument) return [];
+-      return globalBacklinkStore.getUnlinkedMentions(activeDocument.title);
+-    }, [activeDocument?.title, refreshTrigger, storeVersion]);
+-
+-    // group & search filtering: running instantly in O(N)
+-    const linked = useMemo(() => {
+-      return groupMentions(rawLinkedMentions);
+-    }, [rawLinkedMentions, filter, descending, sortByCount, groupMentions]);
+-
+-    const unlinked = useMemo(() => {
+-      return groupMentions(rawUnlinkedMentions);
+-    }, [rawUnlinkedMentions, filter, descending, sortByCount, groupMentions]);
+-
+-    const totalLinkedCount = linked.reduce((sum, [, ms]) => sum + ms.length, 0);
+-    const totalUnlinkedCount = unlinked.reduce((sum, [, ms]) => sum + ms.length, 0);
+-
+-    const handleCollapseAll = () => {
+-      const next: Record<string, boolean> = {};
+-      for (const [source] of linked) next[source] = false;
+-      for (const [source] of unlinked) next[source] = false;
+-      setExpandedGroups(next);
+-    };
+-
+-    const handleExpandAll = () => {
+-      const next: Record<string, boolean> = {};
+-      for (const [source] of linked) next[source] = true;
+-      for (const [source] of unlinked) next[source] = true;
+-      setExpandedGroups(next);
+-    };
+-
+     return (
+-      <SidebarPane
+-        controls={
+-          <>
+-            <SidebarToolbar>
+-              <IconButton
+-                label="Show search filter"
+-                active={filterVisible}
+-                onClick={() => setFilterVisible((current) => !current)}
+-              >
+-                <Search className="size-3.5" />
+-              </IconButton>
+-              <IconButton label="Refresh backlinks" onClick={() => setRefreshTrigger((c) => c + 1)}>
+-                <RotateCw className="size-3.5" />
+-              </IconButton>
+-              <IconButton
+-                label={sortByCount ? "Sort by file name" : "Sort by mention count"}
+-                onClick={() => setSortByCount((current) => !current)}
+-              >
+-                <ArrowDownAz className="size-3.5" />
+-              </IconButton>
+-              <IconButton
+-                label={descending ? "Sort ascending" : "Sort descending"}
+-                onClick={() => setDescending((current) => !current)}
+-              >
+-                <ArrowDownUp className="size-3.5" />
+-              </IconButton>
+-              <IconButton label="Expand all results" onClick={handleExpandAll}>
+-                <ChevronsUpDown className="size-3.5" />
+-              </IconButton>
+-              <IconButton label="Collapse all results" onClick={handleCollapseAll}>
+-                <ListCollapse className="size-3.5" />
+-              </IconButton>
+-            </SidebarToolbar>
+-            {filterField}
+-          </>
+-        }
+-      >
+-        <div className="flex flex-col gap-px p-2 text-xs">
+-          {/* ... (render logic remains, I will extract it) ... */}
++      <BacklinksPane 
++        activeDocument={activeDocument} 
++        filter={filter} 
++        filterVisible={filterVisible}
++        setFilterVisible={setFilterVisible}
++        onOpenDocument={onOpenDocument}
++      />
+     );
+   }

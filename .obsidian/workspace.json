@@ -13,10 +13,19 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "node_modules/@dotenvx/primitives/README.md",
+                "file": "node_modules/zod-validation-error/README.md",
                 "mode": "preview",
                 "source": false,
-                "backlinks": false
+                "backlinks": true,
+                "backlinkOpts": {
+                  "collapseAll": false,
+                  "extraContext": false,
+                  "sortOrder": "alphabetical",
+                  "showSearch": false,
+                  "searchQuery": "",
+                  "backlinkCollapsed": false,
+                  "unlinkedCollapsed": true
+                }
               },
               "icon": "lucide-file",
               "title": "README"
@@ -95,12 +104,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "node_modules/@dotenvx/primitives/README.md",
+                "file": "node_modules/zod-validation-error/README.v3.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Outgoing links from README"
+              "title": "Outgoing links from README.v3"
             }
           },
           {
@@ -153,14 +162,14 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "node_modules/@dotenvx/primitives/README.md",
+                "file": "node_modules/zod-validation-error/README.md",
                 "collapseAll": true,
                 "extraContext": true,
                 "sortOrder": "alphabetical",
-                "showSearch": false,
+                "showSearch": true,
                 "searchQuery": "",
                 "backlinkCollapsed": false,
-                "unlinkedCollapsed": true
+                "unlinkedCollapsed": false
               },
               "icon": "links-coming-in",
               "title": "Backlinks for README"
@@ -183,20 +192,20 @@
       "command-palette:Open command palette": false,
       "bases:Create new base": false,
       "zk-prefixer:Create new unique note": false,
-      "workspaces:Manage workspace layouts": false,
-      "audio-recorder:Start/stop recording": false
+      "workspaces:Manage workspace layouts": false
     }
   },
-  "active": "396df3fbebda5381",
+  "active": "444893acb8d0c9c1",
   "lastOpenFiles": [
+    "node_modules/zod-validation-error/README.v3.md",
+    "node_modules/zod-to-json-schema/README.md",
+    "node_modules/@dotenvx/primitives/README.md",
     "node_modules/@babel/code-frame/README.md",
     "node_modules/@babel/code-frame/Readme.md",
     "flux/Untitled.md",
-    "node_modules/@dotenvx/primitives/README.md",
     "README.md",
     "packages/app-core/src/settings-store.ts",
     "packages/app-core/src/settings-dialog.tsx",
-    "node_modules/zod-validation-error/README.v3.md",
     "node_modules/zod-validation-error/README.md"
   ]
 }

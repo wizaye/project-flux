@@ -846,12 +846,13 @@ export function MarkdownEditor({
   const unlinkedGroups = useMemo(() => groupMentions(unlinkedMentions), [unlinkedMentions]);
 
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [linkedExpanded, setLinkedExpanded] = useState(true);
+  const [unlinkedExpanded, setUnlinkedExpanded] = useState(false);
 
-  const toggleGroup = (source: string) => {
-    const key = `${activeTitle}::${source}`;
+  const toggleGroup = (key: string, isCurrentlyExpanded: boolean) => {
     setExpandedGroups((prev) => ({
       ...prev,
-      [key]: prev[key] === false,
+      [key]: !isCurrentlyExpanded,
     }));
   };
 
@@ -890,16 +891,17 @@ export function MarkdownEditor({
     );
   };
 
-  const renderGroupList = (groups: Array<[string, ReturnType<typeof linkedMentionsFor>]>, defaultExpanded: boolean = false) => (
+  const renderGroupList = (groups: Array<[string, ReturnType<typeof linkedMentionsFor>]>, defaultExpanded: boolean = false, type: "linked" | "unlinked") => (
     <div className="space-y-3">
       {groups.map(([source, mentions]) => {
-        const stored = expandedGroups[`${activeTitle}::${source}`];
+        const key = `${type}::${activeTitle}::${source}`;
+        const stored = expandedGroups[key];
         const isExpanded = stored !== undefined ? stored : defaultExpanded;
         return (
           <div key={source} className="space-y-1.5">
             <button
               type="button"
-              onClick={() => toggleGroup(source)}
+              onClick={() => toggleGroup(key, isExpanded)}
               className="flex w-full items-center justify-between text-left text-xs font-semibold text-foreground outline-none group py-0.5"
             >
               <span className="flex items-center gap-1.5 min-w-0">
@@ -994,36 +996,49 @@ export function MarkdownEditor({
       {showBacklinks ? (
         <section className="mx-auto max-w-[760px] border-t px-9 py-6 space-y-6 [border-color:var(--layout-separator)]">
           {/* Linked Mentions Section */}
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-foreground">
-                Linked mentions
-              </h2>
-              <span className="text-[10px] bg-muted/65 text-muted-foreground px-2 py-0.5 rounded-full font-semibold">
+          {/* Linked Mentions Section */}
+          <div className="mb-6">
+            <button 
+              className="flex w-full items-center justify-between py-1 font-medium text-foreground/80 mb-2 outline-none group hover:text-foreground transition-colors"
+              onClick={() => setLinkedExpanded(prev => !prev)}
+            >
+              <div className="flex items-center gap-1.5 min-w-0">
+                <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${linkedExpanded ? "rotate-90 text-foreground" : "group-hover:text-foreground"}`} />
+                <span className="text-[13px]">Linked mentions</span>
+              </div>
+              <span className="text-[12px] text-muted-foreground opacity-60">
                 {linkedMentions.length}
               </span>
-            </div>
-            {linkedGroups.length ? (
-              renderGroupList(linkedGroups, true)
-            ) : (
-              <p className="text-xs text-muted-foreground italic py-1">No backlinks found.</p>
+            </button>
+            {linkedExpanded && (
+              linkedGroups.length ? (
+                renderGroupList(linkedGroups, true, "linked")
+              ) : (
+                <p className="text-[11px] text-muted-foreground opacity-60 px-5">No backlinks found.</p>
+              )
             )}
           </div>
 
           {/* Unlinked Mentions Section */}
           <div>
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Unlinked mentions
-              </h2>
-              <span className="text-[10px] bg-muted/65 text-muted-foreground px-2 py-0.5 rounded-full font-semibold">
+            <button 
+              className="flex w-full items-center justify-between py-1 font-medium text-foreground/80 mb-2 outline-none group hover:text-foreground transition-colors"
+              onClick={() => setUnlinkedExpanded(prev => !prev)}
+            >
+              <div className="flex items-center gap-1.5 min-w-0">
+                <ChevronRight className={`size-3.5 shrink-0 transition-transform ${unlinkedExpanded ? "rotate-90 text-foreground" : "group-hover:text-foreground"}`} />
+                <span className="text-[13px]">Unlinked mentions</span>
+              </div>
+              <span className="text-[12px] text-muted-foreground opacity-60">
                 {unlinkedMentions.length}
               </span>
-            </div>
-            {unlinkedGroups.length ? (
-              renderGroupList(unlinkedGroups)
-            ) : (
-              <p className="text-xs text-muted-foreground italic py-1">No unlinked mentions found.</p>
+            </button>
+            {unlinkedExpanded && (
+              unlinkedGroups.length ? (
+                renderGroupList(unlinkedGroups, false, "unlinked")
+              ) : (
+                <p className="text-[11px] text-muted-foreground px-5">No unlinked mentions found.</p>
+              )
             )}
           </div>
         </section>

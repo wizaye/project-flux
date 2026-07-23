@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   ArrowDown,
+  ArrowUpDown,
   ArrowUp,
   Bookmark,
   BookmarkPlus,
@@ -858,7 +859,13 @@ function RightContent({
   const [linkedExpanded, setLinkedExpanded] = useState(true);
   const [unlinkedExpanded, setUnlinkedExpanded] = useState(false);
   const [sortByCount, setSortByCount] = useState(false);
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [refreshTrigger] = useState(0);
+
+  useEffect(() => {
+    setFilterVisible(false);
+    setFilter("");
+  }, [pane]);
+
   const filterField = filterVisible ? (
     <div className="bg-sidebar px-2 pb-2">
       <label className="flex h-8 items-center gap-2 rounded-md border bg-background px-2 [border-color:var(--layout-separator)]">
@@ -1039,41 +1046,33 @@ function RightContent({
       setExpandedGroups(next);
     };
 
-    const toggleGroupExpanded = (source: string) => {
-      const key = `${activeTitle}::${source}`;
+    const toggleGroupExpanded = (key: string, isCurrentlyExpanded: boolean) => {
       setExpandedGroups((prev) => ({
         ...prev,
-        [key]: !prev[key],
+        [key]: !isCurrentlyExpanded,
       }));
     };
 
-    const renderGroupedMentions = (groups: Array<[string, DocumentMention[]]>, defaultExpanded: boolean = false) => {
+    const renderGroupedMentions = (groups: Array<[string, DocumentMention[]]>, defaultExpanded: boolean = false, type: "linked" | "unlinked") => {
       return groups.map(([source, mentions]) => {
-        const stored = expandedGroups[`${activeTitle}::${source}`];
+        const key = `${type}::${activeTitle}::${source}`;
+        const stored = expandedGroups[key];
         const isExpanded = stored !== undefined ? stored : defaultExpanded;
         return (
           <div key={source} className="mb-0.5">
-            <div className="flex items-center justify-between py-1 px-1 hover:bg-accent/40 rounded-md group select-none">
+            <div className="flex items-center justify-between py-1 px-1 hover:bg-accent/80 rounded-md group select-none">
               <button
                 type="button"
-                onClick={() => toggleGroupExpanded(source)}
-                className="flex items-center gap-1.5 min-w-0 flex-1 text-left text-[13px] font-semibold text-muted-foreground outline-none hover:text-foreground transition-colors"
+                onClick={() => toggleGroupExpanded(key, isExpanded)}
+                className="flex items-center gap-1.5 min-w-0 flex-1 text-left text-[13px] font-semibold text-muted-foreground outline-none transition-colors"
               >
                 <ChevronRight className={`size-3.5 shrink-0 transition-transform ${isExpanded ? "rotate-90 text-foreground" : ""}`} />
                 <span className="truncate">{titleFromPath(source)}</span>
               </button>
               <div className="flex items-center gap-1">
-                <span className="text-[13px] text-muted-foreground font-medium">
+                <span className="text-[11px] text-muted-foreground opacity-60">
                   {mentions.length}
                 </span>
-                <button
-                  type="button"
-                  title="Open note"
-                  onClick={() => onOpenDocument(source)}
-                  className="opacity-0 group-hover:opacity-100 p-0.5 text-muted-foreground hover:text-foreground rounded-sm hover:bg-accent/60 outline-none"
-                >
-                  <ExternalLink className="size-3" />
-                </button>
               </div>
             </div>
             {isExpanded && (
@@ -1109,18 +1108,23 @@ function RightContent({
       <SidebarPane
         controls={
           <>
-            <SidebarToolbar>
+            <div className="sticky top-0 z-30 flex min-h-9 shrink-0 items-center justify-center gap-0 bg-sidebar px-2">
               <IconButton
-                label="Expand all note groups"
-                onClick={handleExpandAll}
+                label={collapsedResults ? "Expand all" : "Collapse all"}
+                onClick={() => {
+                  if (collapsedResults) handleExpandAll();
+                  else handleCollapseAll();
+                  setCollapsedResults((current) => !current);
+                }}
               >
-                <ChevronsUpDown className="size-3.5" />
+                <List className="size-3.5" />
               </IconButton>
               <IconButton
-                label="Collapse all note groups"
-                onClick={handleCollapseAll}
+                label={descending ? "Sort ascending" : "Sort descending"}
+                active={descending}
+                onClick={() => setDescending((current) => !current)}
               >
-                <ListCollapse className="size-3.5" />
+                <ArrowUpDown className="size-3.5" />
               </IconButton>
               <IconButton
                 label={sortByCount ? "Sort alphabetically" : "Sort by count"}
@@ -1130,32 +1134,27 @@ function RightContent({
                 <ListFilter className="size-3.5" />
               </IconButton>
               <IconButton
-                label={descending ? "Sort ascending" : "Sort descending"}
-                active={descending}
-                onClick={() => setDescending((current) => !current)}
+                label="Show search filter"
+                active={filterVisible}
+                onClick={() => setFilterVisible((current) => !current)}
               >
-                {descending ? <ArrowUp className="size-3.5" /> : <ArrowDown className="size-3.5" />}
+                <Search className="size-3.5" />
               </IconButton>
-              <IconButton
-                label="Refresh backlinks"
-                onClick={() => setRefreshTrigger((t) => t + 1)}
-              >
-                <RefreshCw className="size-3.5" />
-              </IconButton>
-            </SidebarToolbar>
-            {/* Searchbar always visible */}
-            <div className="px-2 py-1.5 border-b border-[var(--layout-separator)] bg-background">
-              <label className="flex h-7 w-full items-center gap-2 rounded-sm border border-[var(--layout-separator)] bg-accent/30 px-2 shadow-xs transition-colors focus-within:border-ring focus-within:bg-background">
-                <Search className="size-3.5 text-muted-foreground shrink-0" />
-                <input
-                  aria-label="Filter"
-                  placeholder="Search..."
-                  value={filter}
-                  onChange={(event) => setFilter(event.target.value)}
-                  className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-                />
-              </label>
             </div>
+            {filterVisible && (
+              <div className="px-3 pb-3">
+                <label className="flex h-8 w-full items-center gap-2.5 rounded-lg border-[1.5px] border-[var(--layout-separator)] bg-background px-3.5 transition-colors focus-within:border-ring">
+                  <Search className="size-4 text-muted-foreground shrink-0" />
+                  <input
+                    aria-label="Filter"
+                    placeholder="Search..."
+                    value={filter}
+                    onChange={(event) => setFilter(event.target.value)}
+                    className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground"
+                  />
+                </label>
+              </div>
+            )}
           </>
         }
       >
@@ -1163,23 +1162,20 @@ function RightContent({
           {/* Linked Mentions Section */}
           <div className="mb-6">
             <button 
-              className="flex w-full items-center justify-between py-1 font-semibold text-foreground mb-2 outline-none group hover:text-foreground transition-colors"
+              className="flex w-full items-center justify-between py-1 font-medium text-foreground/80 mb-2 outline-none transition-colors"
               onClick={() => setLinkedExpanded(prev => !prev)}
             >
-              <div className="flex items-center gap-1.5 min-w-0">
-                <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${linkedExpanded ? "rotate-90 text-foreground" : "group-hover:text-foreground"}`} />
-                <span>Linked mentions</span>
-              </div>
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-[13px]">Linked mentions</span>
+              <span className="text-[12px] text-muted-foreground font-normal opacity-60">
                 {totalLinkedCount}
               </span>
             </button>
             {linkedExpanded && totalLinkedCount > 0 ? (
-              renderGroupedMentions(linked, true)
+              renderGroupedMentions(linked, true, "linked")
             ) : null}
             {linkedExpanded && totalLinkedCount === 0 ? (
               <div className="text-[11px] text-muted-foreground px-5">
-                No linked mentions found.
+                No backlinks found.
               </div>
             ) : null}
           </div>
@@ -1187,19 +1183,18 @@ function RightContent({
           {/* Unlinked Mentions Section */}
           <div>
             <button 
-              className="flex w-full items-center justify-between py-1 font-semibold text-muted-foreground mb-2 outline-none group hover:text-foreground transition-colors"
+              className="flex w-full items-center justify-between py-1 font-medium text-foreground/80 mb-2 outline-none transition-colors"
               onClick={() => setUnlinkedExpanded(prev => !prev)}
             >
-              <div className="flex items-center gap-1.5 min-w-0">
-                <ChevronRight className={`size-3.5 shrink-0 transition-transform ${unlinkedExpanded ? "rotate-90 text-foreground" : "group-hover:text-foreground"}`} />
-                <span>Unlinked mentions</span>
-              </div>
-              <span className="text-[11px]">
-                {totalUnlinkedCount}
-              </span>
+              <span className="text-[13px]">Unlinked mentions</span>
+              {totalUnlinkedCount > 0 && (
+                <span className="text-[12px] text-muted-foreground font-normal opacity-60">
+                  {totalUnlinkedCount}
+                </span>
+              )}
             </button>
             {unlinkedExpanded && totalUnlinkedCount > 0 ? (
-              renderGroupedMentions(unlinked)
+              renderGroupedMentions(unlinked, false, "unlinked")
             ) : null}
             {unlinkedExpanded && totalUnlinkedCount === 0 ? (
               <div className="text-[11px] text-muted-foreground px-5">

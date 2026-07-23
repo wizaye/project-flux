@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FileEntry } from "@flux/bridge-contract";
 import {
   Archive,
@@ -82,6 +82,13 @@ export function VaultExplorer({
   onExpandedFoldersChange,
   onSelectPath,
 }: VaultExplorerProps) {
+  const activeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (activeRef.current) {
+      activeRef.current.scrollIntoView({ block: "center", behavior: "auto" });
+    }
+  }, [activePath, expandedFolders]);
+
   const [selectedFolder, setSelectedFolder] = useState<string>();
   const [localExpandedPaths, setLocalExpandedPaths] = useState<Set<string>>(new Set());
   const expandedPaths = useMemo(
@@ -267,6 +274,7 @@ export function VaultExplorer({
     const metadata = entryMetadata(entry);
     const row = (
       <button
+        ref={entry.path === activePath ? activeRef : undefined}
         type="button"
         role="treeitem"
         data-flux-drop-folder={directory ? entry.path : undefined}
@@ -281,6 +289,7 @@ export function VaultExplorer({
           if (!directory) {
             const separator = entry.path.lastIndexOf("/");
             setSelectedFolder(separator < 0 ? "" : entry.path.slice(0, separator));
+            onSelectPath?.(entry.path);
             onOpen(entry.path);
             return;
           }
@@ -348,7 +357,7 @@ export function VaultExplorer({
           dropTarget === entry.path
             ? "bg-primary/10 text-foreground ring-1 ring-inset ring-primary/50"
             : entry.path === activePath
-              ? "bg-sidebar-selected text-sidebar-accent-foreground font-medium"
+              ? "bg-sidebar-selected text-sidebar-accent-foreground font-medium ring-2 ring-[var(--layout-separator)] ring-inset"
               : "text-muted-foreground"
         }`}
         style={{ paddingLeft: 8 + depth * 16 }}
