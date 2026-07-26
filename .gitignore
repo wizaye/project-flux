@@ -60,4 +60,3 @@ bin/
 
 # Docker
 docker-compose.override.yml
-.octarine/embeddings*

@@ -4,9 +4,8 @@ export interface WorkspaceTab {
   id: number;
   title: string;
   pinned?: boolean;
-  kind?: "graph" | "browser";
+  kind?: "graph";
   graphRootPath?: string;
-  browserUrl?: string;
   document: DemoDocument | null;
   deferred?: { path: string };
   pdf?: { path: string; data: ArrayBuffer };
@@ -39,11 +38,4 @@ export const createGraphWorkspaceTab = (id: number, graphRootPath?: string): Wor
   title: graphRootPath ? "Local graph" : "Graph view",
   kind: "graph",
   graphRootPath,
-});
-
-export const createBrowserWorkspaceTab = (id: number, url: string): WorkspaceTab => ({
-  ...createWorkspaceTab(id),
-  title: "Browser",
-  kind: "browser",
-  browserUrl: url,
 });

@@ -874,7 +874,6 @@ function LeftSidebar({
   vaultEntries,
   activePath,
   revealPath,
-  selectedPath,
   onClearRevealPath,
   onCreateFolder,
   onMovePath,
@@ -905,7 +904,6 @@ function LeftSidebar({
   vaultEntries?: FileEntry[];
   activePath?: string;
   revealPath?: string;
-  selectedPath?: string;
   onClearRevealPath?: () => void;
   onCreateFolder?: (parent: string, name: string) => void;
   onMovePath?: (sourcePath: string, destinationPath: string) => void;
@@ -954,7 +952,6 @@ function LeftSidebar({
               onExpandedFoldersChange={onExpandedFoldersChange}
               onExpandFolder={onExpandFolder}
               onSelectPath={onSelectPath}
-              selectedPath={selectedPath}
             />
           ) : (
             <FileExplorer
@@ -1641,7 +1638,6 @@ export function WorkspaceLeftSidebar({
   vaultEntries,
   activePath,
   revealPath,
-  selectedPath,
   onClearRevealPath,
   onCreateFolder,
   onMovePath,
@@ -1672,7 +1668,6 @@ export function WorkspaceLeftSidebar({
   vaultEntries?: FileEntry[];
   activePath?: string;
   revealPath?: string;
-  selectedPath?: string;
   onClearRevealPath?: () => void;
   onCreateFolder?: (parent: string, name: string) => void;
   onMovePath?: (sourcePath: string, destinationPath: string) => void;
@@ -1705,7 +1700,6 @@ export function WorkspaceLeftSidebar({
       vaultEntries={vaultEntries}
       activePath={activePath}
       revealPath={revealPath}
-      selectedPath={selectedPath}
       onClearRevealPath={onClearRevealPath}
       onCreateFolder={onCreateFolder}
       onMovePath={onMovePath}

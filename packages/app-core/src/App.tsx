@@ -94,8 +94,7 @@ import {
   type WorkspaceLeafView,
   type WorkspaceNode,
 } from "./workspace-tree";
-import { createBrowserWorkspaceTab, createGraphWorkspaceTab, createWorkspaceTab, type WorkspaceTab } from "./workspace-tabs";
-import { BrowserView } from "./browser-view";
+import { createGraphWorkspaceTab, createWorkspaceTab, type WorkspaceTab } from "./workspace-tabs";
 import {
   browserStatePersistence,
   useAppStore,
@@ -318,19 +317,17 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, task: (item: 
 }
 
 function workspaceTabView(tab: WorkspaceTab | undefined): WorkspaceLeafView {
-  return tab?.kind === "graph" ? "graph" : tab?.kind === "browser" ? "browser" : "editor";
+  return tab?.kind === "graph" ? "graph" : "editor";
 }
 
 function EditorPathBreadcrumb({
   path,
   onReveal,
   onRename,
-  onClearReveal,
 }: {
   path: string;
   onReveal: (path: string, file: boolean) => void;
   onRename?: (path: string, name: string) => void;
-  onClearReveal?: () => void;
 }) {
   const segments = path.split("/").filter(Boolean);
   const fileName = segments.at(-1) ?? "";
@@ -444,7 +441,6 @@ function EditorPathBreadcrumb({
                       onClick={(e) => {
                         e.stopPropagation();
                         setIsFocused(true);
-                        onClearReveal?.();
                       }}
                       className="min-w-0 truncate rounded-sm px-[3px] py-0.5 outline-none font-medium text-foreground cursor-pointer"
                       transition={{ type: "spring", stiffness: 120, damping: 20 }}
@@ -615,37 +611,6 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
     createWorkspaceTab(1, documentFromLocation()),
   ]);
   const [activeTabId, setActiveTabId] = useState(1);
-
-  const navHistoryRef = useRef<number[]>([]);
-  const navHistoryIndexRef = useRef<number>(-1);
-  const [navHistoryTick, setNavHistoryTick] = useState(0);
-  const isNavigatingHistory = useRef(false);
-  const lastActiveTabIdRef = useRef<number>(-1);
-
-  const pushHistory = useCallback((tabId: number) => {
-    const history = navHistoryRef.current;
-    const index = navHistoryIndexRef.current;
-    if (history[index] === tabId) return;
-    const newHistory = history.slice(0, index + 1);
-    newHistory.push(tabId);
-    navHistoryRef.current = newHistory;
-    navHistoryIndexRef.current = newHistory.length - 1;
-    setNavHistoryTick((t) => t + 1);
-  }, []);
-
-  useEffect(() => {
-    if (activeTabId === lastActiveTabIdRef.current) return;
-    lastActiveTabIdRef.current = activeTabId;
-    if (isNavigatingHistory.current) {
-      isNavigatingHistory.current = false;
-      return;
-    }
-    const tab = tabs.find((t) => t.id === activeTabId);
-    if (!tab) return;
-    if (!tab.document && !tab.pdf && !tab.preview && !tab.deferred && !tab.kind) return;
-    pushHistory(activeTabId);
-  }, [activeTabId, tabs, pushHistory]);
-
   const [activeVaultId, setActiveVaultId] = useState("");
   const [sessionVaultId, setSessionVaultId] = useState("");
   const [vault, setVault] = useState<VaultInfo | null>(null);
@@ -677,7 +642,6 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
   const [pdfExportOpen, setPdfExportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarRevealPath, setSidebarRevealPath] = useState<string | undefined>();
-  const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | undefined>();
   const revealPathTimerRef = useRef<number | undefined>(undefined);
   const appSettings = useAppStore((state) => state.settings);
   const bookmarkVaultId = vault?.id ?? "default";
@@ -763,11 +727,10 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
   const activeLeaf = findWorkspaceLeaf(workspaceRoot, activeLeafId);
   const graphVisible = workspaceLeaves(workspaceRoot).some((leaf) => leaf.view === "graph");
-  const visibleActiveTab = (() => {
-    if (activeLeaf?.view !== "editor") return undefined;
-    const leafTabs = activeLeaf.tabIds.map((id) => tabs.find((t) => t.id === id)).filter((t) => t !== undefined);
-    return leafTabs.find((tab) => tab.id === activeLeaf.activeTabId) ?? leafTabs[0];
-  })();
+  const visibleActiveTab =
+    activeLeaf?.view === "editor"
+      ? tabs.find((tab) => tab.id === activeLeaf.activeTabId)
+      : undefined;
 
   const activeFilePath =
     visibleActiveTab?.document?.path ??
@@ -1097,7 +1060,6 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
         activeTabId: id,
       }))
     );
-    revealSidebarPath(undefined);
   };
 
   const closeOtherTabs = (leafId: number, id: number) => {
@@ -1114,7 +1076,6 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
     setActiveTabId(id);
     setActiveLeafId(leafId);
     setWorkspaceRoot(nextRoot);
-    revealSidebarPath(tab?.document?.path ?? tab?.pdf?.path ?? tab?.preview?.path);
   };
 
   const closeTabsAfter = (leafId: number, id: number) => {
@@ -1131,10 +1092,7 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
     }));
     setTabs((current) => current.filter((candidate) => workspaceHasTab(nextRoot, candidate.id)));
     setWorkspaceRoot(nextRoot);
-    if (activeLeafId === leafId) {
-      setActiveTabId(nextLeaf.activeTabId);
-      revealSidebarPath(nextActiveTab?.document?.path ?? nextActiveTab?.pdf?.path ?? nextActiveTab?.preview?.path);
-    }
+    if (activeLeafId === leafId) setActiveTabId(nextLeaf.activeTabId);
   };
 
   const closeAllTabs = (leafId: number) => {
@@ -1150,8 +1108,6 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
       setWorkspaceRoot(nextRoot);
       setActiveLeafId(nextLeaf.id);
       setActiveTabId(nextLeaf.activeTabId);
-      const nextActiveTab = tabs.find((candidate) => candidate.id === nextLeaf.activeTabId);
-      revealSidebarPath(nextActiveTab?.document?.path ?? nextActiveTab?.pdf?.path ?? nextActiveTab?.preview?.path);
       return;
     }
     const replacement = createWorkspaceTab(nextTabIdRef.current++);
@@ -1163,7 +1119,6 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
       tabIds: [replacement.id],
       activeTabId: replacement.id,
     });
-    revealSidebarPath(undefined);
   };
 
   const togglePinned = (id: number) => {
@@ -1216,7 +1171,6 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
         activeTabId: replacement.id,
       });
       setActiveTabId(replacement.id);
-      revealSidebarPath(undefined);
       return;
     }
 
@@ -1230,19 +1184,11 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
       if (!workspaceHasTab(nextRoot, tabId)) {
         setTabs((current) => current.filter((candidate) => candidate.id !== tabId));
       }
-      const activeTab = tabs.find((candidate) => candidate.id === nextLeaf.activeTabId);
-      revealSidebarPath(activeTab?.document?.path ?? activeTab?.pdf?.path ?? activeTab?.preview?.path);
       return;
     }
 
-    const index = leaf.tabIds.indexOf(tabId);
     const tabIds = leaf.tabIds.filter((id) => id !== tabId);
-    const nextActiveId =
-      leaf.activeTabId === tabId
-        ? index > 0
-          ? leaf.tabIds[index - 1]
-          : tabIds[0]
-        : leaf.activeTabId;
+    const nextActiveId = leaf.activeTabId === tabId ? tabIds[0] : leaf.activeTabId;
     const nextActiveTab = tabs.find((candidate) => candidate.id === nextActiveId);
     const nextRoot = mapWorkspaceLeaf(workspaceRoot, leafId, (current) => ({
       ...current,
@@ -1255,7 +1201,6 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
     if (!workspaceHasTab(nextRoot, tabId)) {
       setTabs((current) => current.filter((candidate) => candidate.id !== tabId));
     }
-    revealSidebarPath(nextActiveTab?.document?.path ?? nextActiveTab?.pdf?.path ?? nextActiveTab?.preview?.path);
   };
 
   const replaceWorkspaceDocument = (document: DemoDocument | null) => {
@@ -1266,7 +1211,6 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
     nextTabIdRef.current = 2;
     setWorkspaceRoot({ kind: "leaf", id: 1, view: "editor", tabIds: [1], activeTabId: 1 });
     setActiveLeafId(1);
-    revealSidebarPath(document?.path);
   };
 
   const fetchFileChildren = async (vaultId: string, parent: string) => {
@@ -2562,43 +2506,12 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
     });
     setLeftSidebarPane("files");
     setSidebarRevealPath(folder);
-    setSidebarSelectedPath(folder);
     if (revealPathTimerRef.current) window.clearTimeout(revealPathTimerRef.current);
     revealPathTimerRef.current = window.setTimeout(() => {
       setSidebarRevealPath(undefined);
       revealPathTimerRef.current = undefined;
     }, 1800);
   };
-
-  const openBrowserTab = useCallback((url: string) => {
-    const id = nextTabIdRef.current++;
-    setTabs((current) => [...current, createBrowserWorkspaceTab(id, url)]);
-    setActiveTabId(id);
-    setWorkspaceRoot((root) =>
-      mapWorkspaceLeaf(root, activeLeafId, (leaf) => ({
-        ...leaf,
-        view: "browser",
-        tabIds: [...leaf.tabIds, id],
-        activeTabId: id,
-      }))
-    );
-  }, [activeLeafId]);
-
-  useEffect(() => {
-    const handleGlobalClick = (event: MouseEvent) => {
-      const link = (event.target as HTMLElement).closest("a");
-      if (link) {
-        const hrefAttr = link.getAttribute("href");
-        if (hrefAttr && (hrefAttr.startsWith("http://") || hrefAttr.startsWith("https://"))) {
-          event.preventDefault();
-          event.stopPropagation();
-          openBrowserTab(link.href);
-        }
-      }
-    };
-    document.addEventListener("click", handleGlobalClick, { capture: true });
-    return () => document.removeEventListener("click", handleGlobalClick, { capture: true });
-  }, [openBrowserTab]);
 
   const commandsFor = (tab: WorkspaceTab, leafId = activeLeafId): FluxTabCommands => {
     const leaf = findWorkspaceLeaf(workspaceRoot, leafId);
@@ -2713,13 +2626,8 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
   };
 
   const revealSidebarPath = (targetPath?: string) => {
-    setSidebarRevealPath(undefined);
-    setSidebarSelectedPath(undefined);
-    if (revealPathTimerRef.current) {
-      window.clearTimeout(revealPathTimerRef.current);
-      revealPathTimerRef.current = undefined;
-    }
     if (!targetPath) return;
+    setSidebarRevealPath(targetPath);
     const parts = targetPath.split("/").filter(Boolean).slice(0, -1);
     if (parts.length === 0) return;
     const ancestors = parts.map((_, index) => parts.slice(0, index + 1).join("/"));
@@ -2869,78 +2777,34 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
     setActiveTabId(target.id);
   };
 
-  const getNextValidHistoryIndex = (direction: -1 | 1) => {
-    const history = navHistoryRef.current;
-    // We want to return if navHistoryTick changes (which forces render)
-    // so we can use navHistoryTick to ensure React knows this depends on state
-    void navHistoryTick;
-    let index = navHistoryIndexRef.current + direction;
-    while (index >= 0 && index < history.length) {
-      const tabId = history[index];
-      if (tabs.some((t) => t.id === tabId)) {
-        return index;
-      }
-      index += direction;
-    }
-    return -1;
-  };
-
-  const handleGoBack = () => {
-    const prevIndex = getNextValidHistoryIndex(-1);
-    if (prevIndex !== -1) {
-      isNavigatingHistory.current = true;
-      navHistoryIndexRef.current = prevIndex;
-      setNavHistoryTick((t) => t + 1);
-      const tabId = navHistoryRef.current[prevIndex];
-      let targetLeafId = activeLeafId;
-      const leafMatch = workspaceLeaves(workspaceRoot).find((l) => l.tabIds.includes(tabId));
-      if (leafMatch) {
-        targetLeafId = leafMatch.id;
-      }
-      activateLeafTab(targetLeafId, tabId);
-    }
-  };
-
-  const handleGoForward = () => {
-    const nextIndex = getNextValidHistoryIndex(1);
-    if (nextIndex !== -1) {
-      isNavigatingHistory.current = true;
-      navHistoryIndexRef.current = nextIndex;
-      setNavHistoryTick((t) => t + 1);
-      const tabId = navHistoryRef.current[nextIndex];
-      let targetLeafId = activeLeafId;
-      const leafMatch = workspaceLeaves(workspaceRoot).find((l) => l.tabIds.includes(tabId));
-      if (leafMatch) {
-        targetLeafId = leafMatch.id;
-      }
-      activateLeafTab(targetLeafId, tabId);
-    }
-  };
-
   const paneFor = (tab: WorkspaceTab, leafId = activeLeafId) => (
     <FluxEditorPane
       title={
-        tab.kind === "browser" ? (
-          <span className="truncate">{tab.title}</span>
-        ) : workspaceTabPath(tab) ? (
+        workspaceTabPath(tab) ? (
           <EditorPathBreadcrumb
             key={workspaceTabPath(tab)!}
             path={workspaceTabPath(tab)!}
             onReveal={revealEditorPath}
             onRename={renamePath}
-            onClearReveal={() => {
-              setSidebarRevealPath(undefined);
-              setSidebarSelectedPath(undefined);
-            }}
           />
         ) : (
           tab.title
         )
       }
-      canGoBack={getNextValidHistoryIndex(-1) !== -1}
-      canGoForward={getNextValidHistoryIndex(1) !== -1}
-      onGoBack={handleGoBack}
-      onGoForward={handleGoForward}
+      canGoBack={tab.history && tab.historyIndex > 0}
+      canGoForward={tab.history && tab.historyIndex < tab.history.length - 1}
+      onGoBack={() => {
+        if (!tab.history || tab.historyIndex <= 0) return;
+        const newIndex = tab.historyIndex - 1;
+        updateTab(tab.id, (current) => ({ ...current, historyIndex: newIndex }));
+        void openDocument(tab.history[newIndex], tab.id, true);
+      }}
+      onGoForward={() => {
+        if (!tab.history || tab.historyIndex >= tab.history.length - 1) return;
+        const newIndex = tab.historyIndex + 1;
+        updateTab(tab.id, (current) => ({ ...current, historyIndex: newIndex }));
+        void openDocument(tab.history[newIndex], tab.id, true);
+      }}
       headerAction={
         tab.document ? (
           <div className="flex items-center gap-0.5">
@@ -3037,8 +2901,6 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
           data={tab.preview.data}
           mimeType={tab.preview.mimeType}
         />
-      ) : tab.kind === "browser" ? (
-        <BrowserView tab={tab} onClose={() => closeLeafTab(leafId, tab.id)} />
       ) : tab.document ? (
         editorFor(tab)
       ) : (
@@ -3698,8 +3560,6 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
                 searchVault={searchVaultIndex}
                 searchQuery={sidebarSearchQuery}
                 onSearchQueryChange={setSidebarSearchQuery}
-                selectedPath={sidebarSelectedPath}
-                onSelectPath={setSidebarSelectedPath}
               />
             }
             main={

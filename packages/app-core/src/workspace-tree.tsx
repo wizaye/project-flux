@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ResizableSplit } from "./resizable-split";
 
-export type WorkspaceLeafView = "editor" | "graph" | "pdf" | "browser";
+export type WorkspaceLeafView = "editor" | "graph" | "pdf";
 
 export type WorkspaceNode =
   | {

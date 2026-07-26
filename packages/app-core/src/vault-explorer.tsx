@@ -22,7 +22,6 @@ interface VaultExplorerProps {
   entries: FileEntry[];
   activePath?: string;
   revealPath?: string;
-  selectedPath?: string;
   onClearRevealPath?: () => void;
   onOpen: (path: string) => void;
   onCreateNote: (parent: string, name: string) => void;
@@ -90,28 +89,21 @@ export function VaultExplorer({
   onExpandedFoldersChange,
   onExpandFolder,
   onSelectPath,
-  selectedPath,
 }: VaultExplorerProps) {
   const activeRef = useRef<HTMLButtonElement>(null);
   const revealRef = useRef<HTMLButtonElement>(null);
-  const prevActiveRef = useRef(activePath);
-  const prevRevealRef = useRef(revealPath);
-
   useEffect(() => {
-    const activeChanged = activePath !== prevActiveRef.current;
-    const revealChanged = revealPath !== prevRevealRef.current;
-    prevActiveRef.current = activePath;
-    prevRevealRef.current = revealPath;
-
-    const targetRef =
-      revealChanged && revealPath
-        ? revealRef.current ?? activeRef.current
-        : activeChanged && activePath
-          ? activeRef.current
-          : null;
-
-    targetRef?.scrollIntoView({ behavior: "auto", block: "nearest" });
-  }, [activePath, revealPath]);
+    const row = (revealPath ? revealRef.current : null) ?? activeRef.current;
+    if (!row) return;
+    row.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    row.animate(
+      [
+        { backgroundColor: "color-mix(in oklab, var(--primary) 28%, transparent)" },
+        { backgroundColor: "transparent" },
+      ],
+      { duration: 900, easing: "ease-out" }
+    );
+  }, [activePath, expandedFolders, revealPath]);
 
   const [selectedFolder, setSelectedFolder] = useState<string>();
   const [localExpandedPaths, setLocalExpandedPaths] = useState<Set<string>>(new Set());
@@ -320,7 +312,6 @@ export function VaultExplorer({
             return;
           }
           setSelectedFolder(entry.path);
-          onSelectPath?.(entry.path);
           updateExpandedPaths((current) => {
             const next = new Set(current);
             if (next.has(entry.path)) next.delete(entry.path);
@@ -382,16 +373,14 @@ export function VaultExplorer({
           setDropTarget(undefined);
         }}
         onPointerLeave={() => hidePreview(entry.path)}
-        className={`flex w-full min-w-0 max-w-full select-none items-center gap-1.5 overflow-hidden rounded-md py-1.5 pr-2 text-left text-xs outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/50 ${
+        className={`flex w-full min-w-0 max-w-full select-none items-center gap-1.5 overflow-hidden rounded-md py-1.5 pr-2 text-left text-xs outline-none transition-colors duration-100 hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none ${
           dropTarget === entry.path
             ? "bg-primary/10 text-foreground ring-1 ring-inset ring-primary/50"
             : entry.path === activePath
-              ? "bg-sidebar-selected text-sidebar-accent-foreground font-medium"
+              ? "bg-sidebar-selected text-sidebar-accent-foreground font-medium ring-2 ring-[var(--layout-separator)] ring-inset"
               : isRevealTarget
                 ? "bg-primary/10 text-foreground ring-1 ring-inset ring-primary/50"
-                : entry.path === selectedPath
-                  ? "bg-accent/60 text-foreground ring-1 ring-inset ring-primary/50"
-                  : "text-muted-foreground"
+                : "text-muted-foreground"
         }`}
         style={{ paddingLeft: 8 + depth * 16 }}
       >

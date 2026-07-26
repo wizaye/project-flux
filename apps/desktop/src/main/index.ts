@@ -267,7 +267,6 @@ function createWindow(targetUrl?: string) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webviewTag: true,
     },
     titleBarStyle: "hiddenInset",
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1a" : "#e8e8e8",
@@ -277,16 +276,6 @@ function createWindow(targetUrl?: string) {
     window.setWindowButtonVisibility(true);
     window.setWindowButtonPosition({ x: 14, y: 18 });
   }
-
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      import('electron').then(({ shell }) => {
-        shell.openExternal(url);
-      });
-      return { action: 'deny' };
-    }
-    return { action: 'allow' };
-  });
 
   if (devServerUrl) {
     void window.loadURL(targetUrl ?? devServerUrl);
