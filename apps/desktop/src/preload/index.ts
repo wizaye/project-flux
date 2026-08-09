@@ -6,11 +6,27 @@ let nextWatcherId = 0;
 contextBridge.exposeInMainWorld("electronAPI", {
   ping: () => ipcRenderer.invoke("ping"),
   getWindowId: () => ipcRenderer.invoke("get-window-id"),
+  hideWindow: () => ipcRenderer.invoke("hide-window"),
+  getMCPServerCommand: () => ipcRenderer.invoke("get-mcp-server-command"),
+  onCommand: (handler: (command: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, command: string) => handler(command);
+    ipcRenderer.on("flux-command", listener);
+    return () => ipcRenderer.off("flux-command", listener);
+  },
   checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   getPerformanceStats: () => ipcRenderer.invoke("get-performance-stats"),
   setTheme: (theme: "dark" | "light" | "system") => ipcRenderer.invoke("set-native-theme", theme),
+  setMenuBarIconEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke("set-menu-bar-icon-enabled", enabled),
   openWindow: (url: string) => ipcRenderer.invoke("open-window", url),
+  onBeforeClose: (handler: () => Promise<void>) => {
+    const listener = () => {
+      void handler().finally(() => ipcRenderer.send("flux-close-ready"));
+    };
+    ipcRenderer.on("flux-before-close", listener);
+    return () => ipcRenderer.off("flux-before-close", listener);
+  },
   exportPdf: (options: {
     title: string;
     pageSize: "A4" | "Letter";

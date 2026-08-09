@@ -109,6 +109,67 @@ export class WebFluxClient implements FluxClient {
     });
   }
 
+  getVaultConfig(vaultId: string) {
+    return this.request<Record<string, unknown>>(
+      `/vaults/${encodeURIComponent(vaultId)}/config`
+    );
+  }
+
+  putVaultConfig(vaultId: string, value: Record<string, unknown>) {
+    return this.request<void>(`/vaults/${encodeURIComponent(vaultId)}/config`, {
+      method: "PUT",
+      body: JSON.stringify(value),
+    });
+  }
+
+  listMCPConnections() {
+    return this.request<import("@flux/bridge-contract").MCPConnection[]>("/mcp-connections");
+  }
+
+  createMCPConnection(request: {
+    name: string;
+    mode: import("@flux/bridge-contract").MCPConnection["mode"];
+    vaultIds: string[];
+  }) {
+    return this.request<import("@flux/bridge-contract").MCPConnectionCredential>(
+      "/mcp-connections",
+      { method: "POST", body: JSON.stringify(request) }
+    );
+  }
+
+  revokeMCPConnection(connectionId: string) {
+    return this.request<void>(`/mcp-connections/${encodeURIComponent(connectionId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  listModelProviders() {
+    return this.request<import("@flux/bridge-contract").ModelProvider[]>("/model-providers");
+  }
+
+  getModelProvider(providerId: string) {
+    return this.request<import("@flux/bridge-contract").ModelProvider>(
+      `/model-providers/${encodeURIComponent(providerId)}`
+    );
+  }
+
+  updateModelProvider(providerId: string, config: Record<string, unknown>) {
+    return this.request<void>(`/model-providers/${encodeURIComponent(providerId)}`, {
+      method: "PUT",
+      body: JSON.stringify(config),
+    });
+  }
+
+  listAIRuntimes() {
+    return this.request<import("@flux/bridge-contract").AIRuntime[]>("/ai-runtimes");
+  }
+
+  getAIRuntime(runtimeId: string) {
+    return this.request<import("@flux/bridge-contract").AIRuntime>(
+      `/ai-runtimes/${encodeURIComponent(runtimeId)}`
+    );
+  }
+
   listPlugins() {
     return this.request<PluginCatalogEntry[]>("/plugins");
   }
@@ -139,6 +200,18 @@ export class WebFluxClient implements FluxClient {
     return this.request<void>(
       `/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/activate`,
       { method: "POST" }
+    );
+  }
+
+  approvePluginUpdate(
+    vaultId: string,
+    pluginId: string,
+    version: string,
+    grantedPermissions: string[]
+  ) {
+    return this.request<void>(
+      `/vaults/${encodeURIComponent(vaultId)}/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/approve`,
+      { method: "POST", body: JSON.stringify({ grantedPermissions }) }
     );
   }
 
@@ -287,8 +360,9 @@ export class WebFluxClient implements FluxClient {
     );
   }
 
-  getDocumentReferences(vaultId: string, path: string) {
+  getDocumentReferences(vaultId: string, path: string, includeUnlinked = false) {
     const params = new URLSearchParams({ path });
+    if (includeUnlinked) params.set("includeUnlinked", "true");
     return this.request<DocumentReferences>(
       `/vaults/${encodeURIComponent(vaultId)}/references?${params.toString()}`
     );

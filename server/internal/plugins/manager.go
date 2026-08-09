@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -50,9 +52,10 @@ type InstallResult struct {
 }
 
 type CatalogPlugin struct {
-	Manifest Manifest        `json:"manifest"`
-	Plugin   InstalledPlugin `json:"plugin"`
-	Active   bool            `json:"active"`
+	Manifest  Manifest          `json:"manifest"`
+	Plugin    InstalledPlugin   `json:"plugin"`
+	Active    bool              `json:"active"`
+	ViewIcons map[string]string `json:"viewIcons,omitempty"`
 }
 
 type RuntimeBundle struct {
@@ -81,7 +84,18 @@ func (m *Manager) List() ([]CatalogPlugin, error) {
 		if err := json.Unmarshal([]byte(item.ManifestJSON), &manifest); err != nil {
 			return nil, err
 		}
-		result = append(result, CatalogPlugin{Manifest: manifest, Plugin: item, Active: activeVersions[item.PluginID] == item.Version})
+		viewIcons := make(map[string]string)
+		for _, view := range manifest.Contributions.Views {
+			if view.IconPath == "" {
+				continue
+			}
+			data, readErr := os.ReadFile(filepath.Join(item.InstallPath, filepath.FromSlash(view.IconPath)))
+			if readErr != nil || len(data) > 64*1024 {
+				continue
+			}
+			viewIcons[view.ID] = "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(data)
+		}
+		result = append(result, CatalogPlugin{Manifest: manifest, Plugin: item, Active: activeVersions[item.PluginID] == item.Version, ViewIcons: viewIcons})
 	}
 	return result, nil
 }
@@ -193,6 +207,16 @@ func (m *Manager) SetRegistry(registry *Registry) {
 }
 
 func (m *Manager) InstallPackage(ctx context.Context, archivePath, expectedSHA256 string) (InstallResult, error) {
+	return m.installPackage(ctx, archivePath, expectedSHA256, false)
+}
+
+// InstallDevelopmentPackage replaces a local same-version build. It is exposed
+// only through the authenticated desktop API; marketplace installs never use it.
+func (m *Manager) InstallDevelopmentPackage(ctx context.Context, archivePath, expectedSHA256 string) (InstallResult, error) {
+	return m.installPackage(ctx, archivePath, expectedSHA256, true)
+}
+
+func (m *Manager) installPackage(ctx context.Context, archivePath, expectedSHA256 string, development bool) (InstallResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -216,17 +240,50 @@ func (m *Manager) InstallPackage(ctx context.Context, archivePath, expectedSHA25
 	if err != nil {
 		return InstallResult{}, err
 	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return InstallResult{}, err
+	}
 	target := filepath.Join(m.root, manifest.ID, manifest.Version)
-	if _, err := os.Stat(target); err == nil {
-		if _, storeErr := m.store.Version(manifest.ID, manifest.Version); !errors.Is(storeErr, ErrPluginNotFound) {
-			return InstallResult{}, ErrVersionExists
+	existing, existingErr := m.store.Version(manifest.ID, manifest.Version)
+	reloading := existingErr == nil
+	if existingErr != nil && !errors.Is(existingErr, ErrPluginNotFound) {
+		return InstallResult{}, existingErr
+	}
+	if reloading {
+		if strings.EqualFold(existing.Checksum, checksum) {
+			if existing.Development != development {
+				existing.Development = development
+				if err := m.store.Stage(existing); err != nil {
+					return InstallResult{}, err
+				}
+			}
+			return InstallResult{Manifest: manifest, Plugin: existing}, nil
 		}
-		// Recover a bundle rename completed before its metadata transaction.
-		if err := os.RemoveAll(target); err != nil {
-			return InstallResult{}, err
+		if existing.ManifestJSON != string(manifestJSON) && !development {
+			return InstallResult{}, fmt.Errorf("%w: change version when manifest changes", ErrVersionExists)
+		}
+		if existing.ManifestJSON != string(manifestJSON) {
+			var previous Manifest
+			if err := json.Unmarshal([]byte(existing.ManifestJSON), &previous); err != nil {
+				return InstallResult{}, err
+			}
+			if !slices.Equal(previous.RequiredPermissions, manifest.RequiredPermissions) {
+				return InstallResult{}, errors.New("development reload cannot change required permissions; disable and reinstall the plugin")
+			}
+		}
+	}
+	if _, err := os.Stat(target); err == nil {
+		if !reloading {
+			// Recover a bundle rename completed before its metadata transaction.
+			if err := os.RemoveAll(target); err != nil {
+				return InstallResult{}, err
+			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return InstallResult{}, err
+	} else if reloading {
+		return InstallResult{}, errors.New("installed plugin files are missing")
 	}
 
 	stagingRoot := filepath.Join(m.root, ".staging")
@@ -250,22 +307,50 @@ func (m *Manager) InstallPackage(ctx context.Context, archivePath, expectedSHA25
 		if err != nil || !viewInfo.Mode().IsRegular() {
 			return InstallResult{}, fmt.Errorf("plugin view entry %q is missing", view.Entry)
 		}
+		if view.IconPath != "" {
+			iconInfo, iconErr := os.Stat(filepath.Join(temporary, filepath.FromSlash(view.IconPath)))
+			if iconErr != nil || !iconInfo.Mode().IsRegular() || iconInfo.Size() > 64*1024 {
+				return InstallResult{}, fmt.Errorf("plugin view icon %q is missing or exceeds 64 KiB", view.IconPath)
+			}
+		}
+	}
+	plugin := InstalledPlugin{
+		PluginID: manifest.ID, Version: manifest.Version, ManifestJSON: string(manifestJSON),
+		Checksum: checksum, InstallPath: target, Development: development,
+		Status: StatusStaged, InstalledAt: time.Now().UTC(),
+	}
+	if reloading {
+		plugin.Status = existing.Status
+		plugin.ActivatedAt = existing.ActivatedAt
+		if existing.Status == StatusActive && m.runtime != nil {
+			candidate := plugin
+			candidate.InstallPath = temporary
+			if err := m.runtime.ValidatePackage(ctx, candidate, manifest); err != nil {
+				return InstallResult{}, err
+			}
+		}
+		backup := target + ".reload"
+		_ = os.RemoveAll(backup)
+		if err := os.Rename(target, backup); err != nil {
+			return InstallResult{}, err
+		}
+		if err := os.Rename(temporary, target); err != nil {
+			_ = os.Rename(backup, target)
+			return InstallResult{}, err
+		}
+		if err := m.store.Stage(plugin); err != nil {
+			_ = os.RemoveAll(target)
+			_ = os.Rename(backup, target)
+			return InstallResult{}, err
+		}
+		_ = os.RemoveAll(backup)
+		return InstallResult{Manifest: manifest, Plugin: plugin}, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return InstallResult{}, err
 	}
 	if err := os.Rename(temporary, target); err != nil {
 		return InstallResult{}, err
-	}
-
-	manifestJSON, err := json.Marshal(manifest)
-	if err != nil {
-		_ = os.RemoveAll(target)
-		return InstallResult{}, err
-	}
-	plugin := InstalledPlugin{
-		PluginID: manifest.ID, Version: manifest.Version, ManifestJSON: string(manifestJSON),
-		Checksum: checksum, InstallPath: target, Status: StatusStaged, InstalledAt: time.Now().UTC(),
 	}
 	if err := m.store.Stage(plugin); err != nil {
 		_ = os.RemoveAll(target)
@@ -335,6 +420,17 @@ func (m *Manager) Uninstall(pluginID, version string) error {
 	expectedPath := filepath.Join(m.root, pluginID, version)
 	if filepath.Clean(plugin.InstallPath) != expectedPath {
 		return errors.New("plugin install path does not match managed root")
+	}
+	active, activeErr := m.store.Active(pluginID)
+	if plugin.Status == StatusActive || (activeErr == nil && active.ActiveVersion == version) {
+		pluginRoot := filepath.Join(m.root, pluginID)
+		if err := os.RemoveAll(pluginRoot); err != nil {
+			return err
+		}
+		return m.store.DeletePlugin(pluginID)
+	}
+	if activeErr != nil && !errors.Is(activeErr, ErrPluginNotFound) {
+		return activeErr
 	}
 	oldStatus, err := m.store.BeginUninstall(pluginID, version)
 	if err != nil {

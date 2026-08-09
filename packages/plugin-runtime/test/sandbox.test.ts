@@ -39,6 +39,14 @@ describe("plugin sandbox", () => {
     });
   });
 
+  test("provides safe console logging", async () => {
+    const plugin = await loadPlugin(
+      `__fluxRegisterPlugin({ activate() { console.info("plugin ready"); } })`,
+      "logging.plugin"
+    );
+    expect(() => plugin.activate({} as never)).not.toThrow();
+  });
+
   test("rejects bundles with imports", async () => {
     await expect(
       loadPlugin(`import value from "outside"; export default value;`, "unsafe.plugin")

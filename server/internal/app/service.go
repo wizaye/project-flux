@@ -2,14 +2,18 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/flux-pkm/server/internal/domain"
 	"github.com/flux-pkm/server/internal/files"
+	gitadapter "github.com/flux-pkm/server/internal/git"
 	"github.com/flux-pkm/server/internal/vault"
 )
 
@@ -129,7 +133,7 @@ func (s *Service) SearchPage(vaultID, query string, limit, offset int, caseSensi
 	return context.Index.SearchPageCase(query, limit, offset, caseSensitive)
 }
 
-func (s *Service) DocumentReferences(vaultID, path string) (domain.DocumentReferences, error) {
+func (s *Service) DocumentReferences(vaultID, path string, includeUnlinked bool) (domain.DocumentReferences, error) {
 	context, err := s.vaults.Get(vaultID)
 	if err != nil {
 		return domain.DocumentReferences{}, err
@@ -137,7 +141,7 @@ func (s *Service) DocumentReferences(vaultID, path string) (domain.DocumentRefer
 	if context.Index == nil {
 		return domain.DocumentReferences{}, errors.New("vault index is unavailable")
 	}
-	return context.Index.References(path)
+	return context.Index.References(path, includeUnlinked)
 }
 
 func (s *Service) VaultFacets(vaultID string) (domain.VaultFacets, error) {
@@ -165,6 +169,227 @@ func (s *Service) VaultPath(vaultID string) (string, error) {
 		return "", err
 	}
 	return context.RootPath(), nil
+}
+
+func (s *Service) GitStatus(ctx context.Context, vaultID string) (domain.GitStatus, error) {
+	root, err := s.VaultPath(vaultID)
+	if err != nil {
+		return domain.GitStatus{}, err
+	}
+	return gitadapter.Status(ctx, root)
+}
+
+func (s *Service) EnableGit(ctx context.Context, vaultID string) error {
+	vaultContext, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return vaultContext.Mutate(func() error { return gitadapter.Enable(ctx, vaultContext.RootPath()) })
+}
+
+func (s *Service) StageGit(ctx context.Context, vaultID string, paths []string) error {
+	vaultContext, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return vaultContext.Mutate(func() error { return gitadapter.Stage(ctx, vaultContext.RootPath(), paths) })
+}
+
+func (s *Service) UnstageGit(ctx context.Context, vaultID string, paths []string) error {
+	vaultContext, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return vaultContext.Mutate(func() error { return gitadapter.Unstage(ctx, vaultContext.RootPath(), paths) })
+}
+
+func (s *Service) CommitGit(ctx context.Context, vaultID, message string, paths []string) error {
+	vaultContext, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return vaultContext.Mutate(func() error { return gitadapter.Commit(ctx, vaultContext.RootPath(), message, paths) })
+}
+
+func (s *Service) PullGit(ctx context.Context, vaultID string) error {
+	vaultContext, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return vaultContext.Mutate(func() error { return gitadapter.Pull(ctx, vaultContext.RootPath()) })
+}
+
+func (s *Service) PushGit(ctx context.Context, vaultID string) error {
+	return s.PushGitTo(ctx, vaultID, "")
+}
+
+func (s *Service) PushGitTo(ctx context.Context, vaultID, remote string) error {
+	vaultContext, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return vaultContext.Mutate(func() error { return gitadapter.PushTo(ctx, vaultContext.RootPath(), remote) })
+}
+
+func (s *Service) FetchGit(ctx context.Context, vaultID string) error {
+	vaultContext, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return vaultContext.Mutate(func() error { return gitadapter.Fetch(ctx, vaultContext.RootPath()) })
+}
+
+func (s *Service) SetGitRemote(ctx context.Context, vaultID, name, url string) error {
+	vaultContext, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return vaultContext.Mutate(func() error { return gitadapter.SetRemote(ctx, vaultContext.RootPath(), name, url) })
+}
+
+func (s *Service) RemoveGitRemote(ctx context.Context, vaultID, name string) error {
+	vaultContext, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return vaultContext.Mutate(func() error { return gitadapter.RemoveRemote(ctx, vaultContext.RootPath(), name) })
+}
+
+func (s *Service) GitDiff(ctx context.Context, vaultID, path string, staged bool) (domain.GitDiff, error) {
+	root, err := s.VaultPath(vaultID)
+	if err != nil {
+		return domain.GitDiff{}, err
+	}
+	return gitadapter.Diff(ctx, root, path, staged)
+}
+
+func (s *Service) DiscardGit(ctx context.Context, vaultID string, paths []string) error {
+	vaultContext, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return vaultContext.Mutate(func() error { return gitadapter.Discard(ctx, vaultContext.RootPath(), paths) })
+}
+
+func (s *Service) GitBranches(ctx context.Context, vaultID string) ([]domain.GitBranch, error) {
+	root, err := s.VaultPath(vaultID)
+	if err != nil {
+		return nil, err
+	}
+	return gitadapter.Branches(ctx, root)
+}
+
+func (s *Service) CheckoutGit(ctx context.Context, vaultID, branch string, create bool) error {
+	vaultContext, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return vaultContext.Mutate(func() error { return gitadapter.Checkout(ctx, vaultContext.RootPath(), branch, create) })
+}
+
+func (s *Service) GitHistory(ctx context.Context, vaultID string, limit int) ([]domain.GitCommit, error) {
+	root, err := s.VaultPath(vaultID)
+	if err != nil {
+		return nil, err
+	}
+	return gitadapter.History(ctx, root, limit)
+}
+
+func (s *Service) ResolveGit(ctx context.Context, vaultID, path, strategy string) error {
+	vaultContext, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return vaultContext.Mutate(func() error { return gitadapter.Resolve(ctx, vaultContext.RootPath(), path, strategy) })
+}
+
+func (s *Service) VaultConfig(vaultID string) (json.RawMessage, error) {
+	context, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return nil, err
+	}
+	content, err := os.ReadFile(filepath.Join(context.RootPath(), ".flux", "config.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return json.RawMessage(`{}`), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !json.Valid(content) {
+		return nil, errors.New("invalid .flux/config.json")
+	}
+	return content, nil
+}
+
+func (s *Service) SaveVaultConfig(vaultID string, content json.RawMessage) error {
+	var value map[string]any
+	if len(content) > 64<<10 || json.Unmarshal(content, &value) != nil || value == nil {
+		return errors.New("invalid vault config")
+	}
+	for _, key := range []string{"dailyFolder", "weeklyFolder", "inboxPath", "dailyTemplate", "weeklyTemplate"} {
+		raw, exists := value[key]
+		if !exists {
+			continue
+		}
+		configPath, ok := raw.(string)
+		required := key == "dailyFolder" || key == "weeklyFolder" || key == "inboxPath"
+		if !ok || (required && configPath == "") ||
+			(configPath != "" && (path.IsAbs(configPath) || path.Clean(configPath) == ".." ||
+				len(path.Clean(configPath)) >= 3 && path.Clean(configPath)[:3] == "../")) {
+			return fmt.Errorf("invalid %s", key)
+		}
+	}
+	for _, key := range []string{"dailyFormat", "weeklyFormat"} {
+		raw, exists := value[key]
+		if !exists {
+			continue
+		}
+		format, ok := raw.(string)
+		if !ok || format == "" || strings.ContainsAny(format, `/\`) || strings.Contains(format, "..") {
+			return fmt.Errorf("invalid %s", key)
+		}
+	}
+	if raw, exists := value["timeZone"]; exists {
+		timeZone, ok := raw.(string)
+		if !ok {
+			return errors.New("invalid timeZone")
+		}
+		if _, err := time.LoadLocation(timeZone); err != nil {
+			return errors.New("invalid timeZone")
+		}
+	}
+	context, err := s.vaults.Get(vaultID)
+	if err != nil {
+		return err
+	}
+	return context.Mutate(func() error {
+		directory := filepath.Join(context.RootPath(), ".flux")
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			return err
+		}
+		temporary, err := os.CreateTemp(directory, ".config-*")
+		if err != nil {
+			return err
+		}
+		name := temporary.Name()
+		defer os.Remove(name)
+		if err := temporary.Chmod(0o600); err != nil {
+			_ = temporary.Close()
+			return err
+		}
+		if _, err := temporary.Write(content); err != nil {
+			_ = temporary.Close()
+			return err
+		}
+		if err := temporary.Sync(); err != nil {
+			_ = temporary.Close()
+			return err
+		}
+		if err := temporary.Close(); err != nil {
+			return err
+		}
+		return os.Rename(name, filepath.Join(directory, "config.json"))
+	})
 }
 
 func (s *Service) VaultRevision(vaultID string) (uint64, error) {
@@ -490,7 +715,22 @@ func (s *Service) PurgeTrash(vaultID string, retentionDays int) (domain.PurgeRes
 }
 
 func (s *Service) moveFile(context *vault.Context, vaultID, sourcePath, destinationPath string) (domain.FileEntry, error) {
-	entry, err := context.Files.Move(sourcePath, destinationPath)
+	var entry domain.FileEntry
+	var err error
+	info := context.VaultInfo()
+	if context.Index != nil && info.State == domain.VaultStateActive {
+		var entries []domain.FileEntry
+		var linkSources []string
+		entries, err = context.Index.ListFiles()
+		if err == nil {
+			linkSources, err = context.Index.LinkSourcePathsForMove(sourcePath)
+		}
+		if err == nil {
+			entry, err = context.Files.MoveIndexed(sourcePath, destinationPath, entries, linkSources)
+		}
+	} else {
+		entry, err = context.Files.Move(sourcePath, destinationPath)
+	}
 	if errors.Is(err, files.ErrLinkRewrite) {
 		s.vaults.Degrade(vaultID)
 		s.moveIndex(context, vaultID, sourcePath, entry)

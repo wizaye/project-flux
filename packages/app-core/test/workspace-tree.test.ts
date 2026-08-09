@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
 import {
+  closeOtherWorkspaceTabs,
+  closeWorkspaceTabsAfter,
   findWorkspaceLeaf,
   moveWorkspaceTab,
   workspaceEdgeLeafIds,
+  workspaceHasTab,
   workspaceLeaves,
   type WorkspaceNode,
 } from "../src/workspace-tree";
@@ -54,4 +57,41 @@ test("finds the titlebar edges across four-way splits", () => {
 
   expect(workspaceEdgeLeafIds(root, "left")).toEqual([1, 2]);
   expect(workspaceEdgeLeafIds(root, "right")).toEqual([3, 4]);
+});
+
+test("close other tabs only changes the selected split leaf", () => {
+  const root: WorkspaceNode = {
+    kind: "split",
+    id: 3,
+    direction: "horizontal",
+    children: [
+      { kind: "leaf", id: 1, view: "editor", tabIds: [1, 2, 3], activeTabId: 3 },
+      { kind: "leaf", id: 2, view: "editor", tabIds: [2, 4], activeTabId: 4 },
+    ],
+  };
+
+  const closed = closeOtherWorkspaceTabs(root, 1, 2);
+  expect(findWorkspaceLeaf(closed, 1)).toMatchObject({ tabIds: [2], activeTabId: 2 });
+  expect(findWorkspaceLeaf(closed, 2)).toMatchObject({ tabIds: [2, 4], activeTabId: 4 });
+  expect(workspaceHasTab(closed, 1)).toBe(false);
+  expect(workspaceHasTab(closed, 3)).toBe(false);
+  expect(workspaceHasTab(closed, 4)).toBe(true);
+});
+
+test("close tabs to right removes stale ids only from the selected split leaf", () => {
+  const root: WorkspaceNode = {
+    kind: "split",
+    id: 3,
+    direction: "horizontal",
+    children: [
+      { kind: "leaf", id: 1, view: "editor", tabIds: [1, 2, 3], activeTabId: 3 },
+      { kind: "leaf", id: 2, view: "editor", tabIds: [3, 4], activeTabId: 4 },
+    ],
+  };
+
+  const closed = closeWorkspaceTabsAfter(root, 1, 1);
+  expect(findWorkspaceLeaf(closed, 1)).toMatchObject({ tabIds: [1], activeTabId: 1 });
+  expect(findWorkspaceLeaf(closed, 2)).toMatchObject({ tabIds: [3, 4], activeTabId: 4 });
+  expect(workspaceHasTab(closed, 2)).toBe(false);
+  expect(workspaceHasTab(closed, 3)).toBe(true);
 });

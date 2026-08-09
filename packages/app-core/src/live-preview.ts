@@ -17,6 +17,7 @@ import {
 import { javascriptLanguage, typescriptLanguage } from "@codemirror/lang-javascript";
 import { classHighlighter, highlightTree } from "@lezer/highlight";
 import "katex/dist/katex.min.css";
+import DOMPurify from "dompurify";
 import { splitFrontmatter } from "./frontmatter";
 import { calloutSymbols, wikiLabel } from "./obsidian-markdown";
 import type { DemoDocument } from "./markdown-editor";
@@ -36,8 +37,8 @@ const HIDDEN_MARKS = new Set([
 
 let mermaidId = 0;
 
-function reveal(view: EditorView, position: number) {
-  view.dispatch({ selection: { anchor: position }, scrollIntoView: true });
+function reveal(view: EditorView, anchor: number, head?: number) {
+  view.dispatch({ selection: { anchor, head: head ?? anchor }, scrollIntoView: true });
   view.focus();
 }
 
@@ -326,9 +327,10 @@ class BlockWidget extends WidgetType {
   private observer?: MutationObserver;
 
   constructor(
-    private kind: "code" | "math" | "mermaid" | "table",
+    private kind: "code" | "math" | "mermaid" | "table" | "html",
     private source: string,
     private from: number,
+    private to: number,
     private language = ""
   ) {
     super();
@@ -339,6 +341,7 @@ class BlockWidget extends WidgetType {
       widget.kind === this.kind &&
       widget.source === this.source &&
       widget.from === this.from &&
+      widget.to === this.to &&
       widget.language === this.language
     );
   }
@@ -349,7 +352,7 @@ class BlockWidget extends WidgetType {
     element.title = "Click to edit source";
     element.addEventListener("mousedown", (event) => {
       event.preventDefault();
-      reveal(view, this.from + 1);
+      reveal(view, this.from, this.to);
     });
 
     if (this.kind === "table") {
@@ -365,6 +368,9 @@ class BlockWidget extends WidgetType {
         attributes: true,
         attributeFilter: ["class"],
       });
+    } else if (this.kind === "html") {
+      element.classList.add("flux-reading-view");
+      element.innerHTML = DOMPurify.sanitize(this.source);
     } else {
       const pre = document.createElement("pre");
       const code = document.createElement("code");
@@ -468,7 +474,7 @@ function fencedBlock(source: string) {
 }
 
 type BlockSpec = {
-  kind: "code" | "math" | "mermaid" | "table";
+  kind: "code" | "math" | "mermaid" | "table" | "html";
   source: string;
   from: number;
   to: number;
@@ -481,6 +487,47 @@ function buildBlockSpecs(state: EditorState): BlockSpec[] {
 
   syntaxTree(state).iterate({
     enter(node) {
+      if (node.type.name === "HTMLBlock") {
+        const source = state.doc.sliceString(node.from, node.to);
+        const lines = source.split("\n");
+        
+        let currentFrom = node.from;
+        let currentSource = "";
+        let currentChunkFrom = node.from;
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          const lineLength = line.length + (i < lines.length - 1 ? 1 : 0);
+          
+          const isCompleteLine = /^\s*<([a-zA-Z][\w-]*)[^>]*>.*<\/\1>\s*$/i.test(line) || 
+                                 /^\s*<([a-zA-Z][\w-]*)[^>]*\/>\s*$/i.test(line);
+
+          if (isCompleteLine) {
+            if (currentSource.trim()) {
+              fencedRanges.push([currentChunkFrom, currentFrom]);
+              specs.push({ kind: "html", source: currentSource, from: currentChunkFrom, to: currentFrom });
+              currentSource = "";
+            }
+            
+            // Push this complete single-line tag as its own block
+            fencedRanges.push([currentFrom, currentFrom + line.length]); // Exclude \n from the highlight boundary
+            specs.push({ kind: "html", source: line, from: currentFrom, to: currentFrom + line.length });
+            
+            currentChunkFrom = currentFrom + lineLength;
+          } else {
+            currentSource += line + (i < lines.length - 1 ? "\n" : "");
+          }
+          
+          currentFrom += lineLength;
+        }
+
+        if (currentSource.trim()) {
+          fencedRanges.push([currentChunkFrom, node.to]);
+          specs.push({ kind: "html", source: currentSource, from: currentChunkFrom, to: node.to });
+        }
+        
+        return false;
+      }
       if (node.type.name !== "FencedCode") return;
       const { language, content } = fencedBlock(state.doc.sliceString(node.from, node.to));
       fencedRanges.push([node.from, node.to]);
@@ -560,7 +607,7 @@ function blockDecorations(state: EditorState, specs: BlockSpec[]) {
       .map((spec) =>
         Decoration.replace({
           block: true,
-          widget: new BlockWidget(spec.kind, spec.source, spec.from, spec.language),
+          widget: new BlockWidget(spec.kind, spec.source, spec.from, spec.to, spec.language),
         }).range(spec.from, spec.to)
       )
   );
@@ -584,13 +631,17 @@ const blockPreview = StateField.define<BlockPreviewState>({
   ],
 });
 
-function livePreviewDecorations(view: EditorView, documents: DemoDocument[]): DecorationSet {
+function livePreviewDecorations(
+  view: EditorView,
+  documents: DemoDocument[]
+): DecorationSet {
   const decorations: Range<Decoration>[] = [];
   const replacements: Array<[number, number]> = [];
   const protectedRanges: Array<[number, number]> = [];
   const activeRanges = view.state.selection.ranges;
   const isActive = (from: number, to = from) =>
     activeRanges.some((range) => range.from <= to && range.to >= from);
+
   const activeLines = activeRanges.map((range) => [
     view.state.doc.lineAt(range.from).number,
     view.state.doc.lineAt(range.to).number,
@@ -882,6 +933,7 @@ function livePreviewDecorations(view: EditorView, documents: DemoDocument[]): De
     });
   }
 
+  decorations.sort((a, b) => a.from - b.from);
   return Decoration.set(decorations, true);
 }
 

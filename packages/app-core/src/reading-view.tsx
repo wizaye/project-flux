@@ -124,7 +124,7 @@ function obsidianInline(md: MarkdownIt) {
 }
 
 const md: MarkdownIt = new MarkdownIt({
-  html: false,
+  html: true,
   linkify: true,
   typographer: true,
   highlight(code, language) {
@@ -180,7 +180,15 @@ function cachedMarkdownHtml(value: string, documents: DemoDocument[]) {
   return html;
 }
 
-function ReadingView({ value, documents }: { value: string; documents: DemoDocument[] }) {
+function ReadingView({
+  value,
+  documents,
+  onNavigate,
+}: {
+  value: string;
+  documents: DemoDocument[];
+  onNavigate?: (target: string) => void;
+}) {
   const { theme } = useTheme();
   const resolvedTheme = document.documentElement.classList.contains("dark") ? "dark" : "light";
   const sourceHtml = useMemo(() => cachedMarkdownHtml(value, documents), [documents, value]);
@@ -246,6 +254,18 @@ function ReadingView({ value, documents }: { value: string; documents: DemoDocum
     <article
       className="flux-reading-view mx-auto max-w-[760px] px-9 pb-24 pt-2"
       onClick={(event) => {
+        const link = (event.target as HTMLElement).closest<HTMLAnchorElement>("a");
+        if (link && onNavigate) {
+          const href = link.getAttribute("href");
+          if (href && !href.startsWith("http")) {
+            event.preventDefault();
+            let target = href;
+            if (href.startsWith("#")) target = decodeURIComponent(href.slice(1));
+            onNavigate(target);
+            return;
+          }
+        }
+
         const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
           "button[data-heading-fold]"
         );

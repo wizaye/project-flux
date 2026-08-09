@@ -37,6 +37,7 @@ type InstalledPlugin struct {
 	ManifestJSON  string        `gorm:"type:text;not null" json:"-"`
 	Checksum      string        `gorm:"not null" json:"checksum"`
 	InstallPath   string        `gorm:"not null" json:"-"`
+	Development   bool          `gorm:"not null;default:false" json:"development"`
 	Status        InstallStatus `gorm:"not null;index" json:"status"`
 	InstalledAt   time.Time     `gorm:"not null" json:"installedAt"`
 	ActivatedAt   *time.Time    `json:"activatedAt,omitempty"`
@@ -136,7 +137,7 @@ func (s *MetadataStore) Stage(plugin InstalledPlugin) error {
 	return s.db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "plugin_id"}, {Name: "version"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"manifest_json", "checksum", "install_path", "status", "installed_at", "failure_reason",
+			"manifest_json", "checksum", "install_path", "development", "status", "installed_at", "failure_reason",
 		}),
 	}).Create(&plugin).Error
 }
@@ -328,6 +329,20 @@ func (s *MetadataStore) DeleteVersion(pluginID, version string) error {
 			return err
 		}
 		return tx.Model(&ActivePlugin{}).Where("plugin_id = ? AND previous_version = ?", pluginID, version).Update("previous_version", "").Error
+	})
+}
+
+func (s *MetadataStore) DeletePlugin(pluginID string) error {
+	s.writer.Lock()
+	defer s.writer.Unlock()
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&ActivePlugin{}, "plugin_id = ?", pluginID).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&VaultPlugin{}, "plugin_id = ?", pluginID).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&InstalledPlugin{}, "plugin_id = ?", pluginID).Error
 	})
 }
 

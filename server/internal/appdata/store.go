@@ -85,7 +85,13 @@ func Open(databasePath string) (*Store, error) {
 			return nil, err
 		}
 	}
-	if err := db.AutoMigrate(&RecentVault{}, &WorkspaceSession{}, &AppSetting{}); err != nil {
+	if err := db.AutoMigrate(
+		&RecentVault{},
+		&WorkspaceSession{},
+		&AppSetting{},
+		&MCPConnection{},
+		&MCPVaultGrant{},
+	); err != nil {
 		_ = store.Close()
 		return nil, err
 	}

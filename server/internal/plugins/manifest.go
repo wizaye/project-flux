@@ -21,8 +21,22 @@ var (
 var supportedCapabilities = map[string]bool{
 	"vault.read": true, "vault.write": true, "vault.move": true, "vault.delete": true,
 	"vault.search": true, "documents.parse": true, "tasks.query": true, "tasks.update": true,
-	"ui.command": true, "ui.view": true, "network.fetch": true, "background.run": true,
-	"git.status": true, "git.commit": true,
+	"ui.command": true, "ui.view": true, "ui.external": true, "network.fetch": true, "background.run": true,
+	"git.status": true, "git.init": true, "git.stage": true, "git.unstage": true,
+	"git.commit": true, "git.pull": true, "git.push": true, "git.fetch": true, "git.diff": true,
+	"git.remote.set": true, "git.remote.remove": true,
+	"git.discard": true, "git.branches": true, "git.checkout": true, "git.branch.create": true,
+	"git.history": true, "git.resolve": true,
+	"ai.providers": true, "ai.chat": true,
+}
+
+var supportedViewLocations = map[string]bool{
+	"": true, "modal": true, "left-sidebar": true, "right-sidebar": true, "workspace": true,
+}
+
+var supportedViewIcons = map[string]bool{
+	"": true, "puzzle": true, "sparkles": true, "panel-left": true, "panel-right": true,
+	"layout-dashboard": true, "calendar": true, "list": true, "git-branch": true,
 }
 
 type Manifest struct {
@@ -52,9 +66,19 @@ type CommandContribution struct {
 }
 
 type ViewContribution struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Entry string `json:"entry"`
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Entry    string `json:"entry"`
+	Location string `json:"location,omitempty"`
+	Icon     string `json:"icon,omitempty"`
+	IconPath string `json:"iconPath,omitempty"`
+}
+
+func (v ViewContribution) EffectiveLocation() string {
+	if v.Location == "" {
+		return "left-sidebar"
+	}
+	return v.Location
 }
 
 type SettingContribution struct {
@@ -133,6 +157,15 @@ func (m Manifest) validateContributions() error {
 		if view.Entry == "" || strings.Contains(view.Entry, `\`) || path.IsAbs(view.Entry) || path.Clean(view.Entry) != view.Entry || strings.HasPrefix(view.Entry, "../") || strings.ToLower(path.Ext(view.Entry)) != ".html" {
 			return fmt.Errorf("view %q entry must be a clean relative .html path", view.ID)
 		}
+		if !supportedViewLocations[view.Location] {
+			return fmt.Errorf("view %q has unsupported location %q", view.ID, view.Location)
+		}
+		if !supportedViewIcons[view.Icon] {
+			return fmt.Errorf("view %q has unsupported icon %q", view.ID, view.Icon)
+		}
+		if view.IconPath != "" && !validPluginAsset(view.IconPath, ".svg") {
+			return fmt.Errorf("view %q iconPath must be a clean relative .svg path", view.ID)
+		}
 	}
 	for _, setting := range m.Contributions.Settings {
 		if err := validateID(setting.ID, setting.Title); err != nil {
@@ -164,6 +197,12 @@ func (m Manifest) validateContributions() error {
 		}
 	}
 	return nil
+}
+
+func validPluginAsset(value, extension string) bool {
+	return value != "" && !strings.Contains(value, `\`) && !path.IsAbs(value) &&
+		path.Clean(value) == value && !strings.HasPrefix(value, "../") &&
+		strings.EqualFold(path.Ext(value), extension)
 }
 
 func validateEntry(entry string) error {

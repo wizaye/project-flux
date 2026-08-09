@@ -246,4 +246,11 @@ func TestGraphUsesPathsAndNeverCollapsesDuplicateNames(t *testing.T) {
 	if !missing {
 		t.Fatalf("missing graph node was not represented: %#v", graph.Nodes)
 	}
+	sources, err := store.LinkSourcePathsForMove("notes/target.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 1 || sources[0] != "notes/start.md" {
+		t.Fatalf("move rewrite scanned unrelated sources: %#v", sources)
+	}
 }

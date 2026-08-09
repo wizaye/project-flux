@@ -55,7 +55,7 @@ func TestSearchOperatorsAndDocumentReferences(t *testing.T) {
 		t.Fatalf("search pagination failed: %#v then %#v, %v", firstPage, secondPage, err)
 	}
 
-	references, err := store.References("notes/target.md")
+	references, err := store.References("notes/target.md", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +67,13 @@ func TestSearchOperatorsAndDocumentReferences(t *testing.T) {
 	}
 	if len(references.Outgoing) != 1 || references.Outgoing[0] != "notes/other.md" {
 		t.Fatalf("outgoing links failed: %#v", references.Outgoing)
+	}
+	lazyReferences, err := store.References("notes/target.md", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lazyReferences.Linked) != 2 || len(lazyReferences.Unlinked) != 0 {
+		t.Fatalf("lazy references did eager unlinked work: %#v", lazyReferences)
 	}
 }
 

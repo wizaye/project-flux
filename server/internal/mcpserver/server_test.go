@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -67,14 +68,30 @@ func TestMCPReadAndConflictSafeWritePolicy(t *testing.T) {
 	}
 	client, closeClient := connectTestClient(t, New(service, readOnlyPolicy, "test"))
 	defer closeClient()
+	tools, err := client.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validToolName := regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	for _, tool := range tools.Tools {
+		if !validToolName.MatchString(tool.Name) {
+			t.Fatalf("MCP-incompatible tool name %q", tool.Name)
+		}
+	}
+	vaults, err := client.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "flux_list_vaults", Arguments: map[string]any{},
+	})
+	if err != nil || vaults.IsError || !resultContains(vaults, info.ID) {
+		t.Fatalf("authorized vault discovery failed: result=%#v err=%v", vaults, err)
+	}
 	result, err := client.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "flux.read_file", Arguments: map[string]any{"vaultId": info.ID, "path": "note.md"},
+		Name: "flux_read_file", Arguments: map[string]any{"vaultId": info.ID, "path": "note.md"},
 	})
 	if err != nil || result.IsError {
 		t.Fatalf("read failed: result=%#v err=%v", result, err)
 	}
 	result, err = client.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "flux.save_file", Arguments: map[string]any{
+		Name: "flux_save_file", Arguments: map[string]any{
 			"vaultId": info.ID, "path": "note.md", "content": "blocked", "expectedHash": document.ContentHash,
 		},
 	})
@@ -90,7 +107,7 @@ func TestMCPReadAndConflictSafeWritePolicy(t *testing.T) {
 	trusted, closeTrusted := connectTestClient(t, New(service, trustedPolicy, "test"))
 	defer closeTrusted()
 	result, err = trusted.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "flux.save_file", Arguments: map[string]any{
+		Name: "flux_save_file", Arguments: map[string]any{
 			"vaultId": info.ID, "path": "note.md", "content": "stale", "expectedHash": "wrong",
 		},
 	})
@@ -98,7 +115,7 @@ func TestMCPReadAndConflictSafeWritePolicy(t *testing.T) {
 		t.Fatalf("stale write not rejected: result=%#v err=%v", result, err)
 	}
 	result, err = trusted.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "flux.save_file", Arguments: map[string]any{
+		Name: "flux_save_file", Arguments: map[string]any{
 			"vaultId": info.ID, "path": "note.md", "content": "after", "expectedHash": document.ContentHash,
 		},
 	})
@@ -114,7 +131,7 @@ func TestMCPReadAndConflictSafeWritePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err = trusted.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "flux.apply_vault_plan", Arguments: map[string]any{
+		Name: "flux_apply_vault_plan", Arguments: map[string]any{
 			"vaultId": info.ID,
 			"operations": []map[string]any{
 				{"action": "create", "path": "created.md", "content": "created"},
@@ -167,7 +184,7 @@ func TestGuidedWriteUsesClientElicitation(t *testing.T) {
 	})
 	defer closeClient()
 	result, err := client.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "flux.create_file", Arguments: map[string]any{
+		Name: "flux_create_file", Arguments: map[string]any{
 			"vaultId": info.ID, "path": "approved.md", "content": "approved",
 		},
 	})
@@ -202,7 +219,7 @@ func TestGuidedWriteFailsWithoutElicitationSupport(t *testing.T) {
 	client, closeClient := connectTestClient(t, New(service, policy, "test"))
 	defer closeClient()
 	result, err := client.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "flux.create_file", Arguments: map[string]any{
+		Name: "flux_create_file", Arguments: map[string]any{
 			"vaultId": info.ID, "path": "blocked.md", "content": "blocked",
 		},
 	})

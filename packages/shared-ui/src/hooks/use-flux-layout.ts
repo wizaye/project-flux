@@ -31,7 +31,6 @@ interface ResolvedSidebarOptions {
 interface UseFluxLayoutOptions {
   left?: FluxSidebarOptions;
   right?: FluxSidebarOptions;
-  storageKey?: string | false;
   onStateChange?: (state: FluxLayoutState) => void;
   initialState?: FluxLayoutState;
 }
@@ -61,16 +60,9 @@ function resolveOptions(options?: FluxSidebarOptions): ResolvedSidebarOptions {
   };
 }
 
-function isSidebarState(value: unknown): value is FluxSidebarState {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<FluxSidebarState>;
-  return typeof candidate.width === "number" && typeof candidate.collapsed === "boolean";
-}
-
 function createInitialState(
   left: ResolvedSidebarOptions,
   right: ResolvedSidebarOptions,
-  storageKey: string | false,
   initialState?: FluxLayoutState
 ): FluxLayoutState {
   const fallback: FluxLayoutState = {
@@ -90,46 +82,24 @@ function createInitialState(
       },
     };
   }
-  if (!storageKey || typeof window === "undefined") return fallback;
-
-  try {
-    const saved = JSON.parse(
-      window.localStorage.getItem(storageKey) ?? "null"
-    ) as Partial<FluxLayoutState> | null;
-    if (!saved || !isSidebarState(saved.left) || !isSidebarState(saved.right)) return fallback;
-
-    return {
-      left: {
-        width: clamp(saved.left.width, left.minWidth, left.maxWidth),
-        collapsed: saved.left.collapsed,
-      },
-      right: {
-        width: clamp(saved.right.width, right.minWidth, right.maxWidth),
-        collapsed: saved.right.collapsed,
-      },
-    };
-  } catch {
-    return fallback;
-  }
+  return fallback;
 }
 
 export function useFluxLayout({
   left: leftOptions,
   right: rightOptions,
-  storageKey = "flux-layout",
   onStateChange,
   initialState,
 }: UseFluxLayoutOptions = {}) {
   const left = useMemo(() => resolveOptions(leftOptions), [leftOptions]);
   const right = useMemo(() => resolveOptions(rightOptions), [rightOptions]);
   const [state, setState] = useState<FluxLayoutState>(() =>
-    createInitialState(left, right, storageKey, initialState)
+    createInitialState(left, right, initialState)
   );
 
   useEffect(() => {
-    if (storageKey) window.localStorage.setItem(storageKey, JSON.stringify(state));
     onStateChange?.(state);
-  }, [onStateChange, state, storageKey]);
+  }, [onStateChange, state]);
 
   const toggle = useCallback((side: FluxSidebarSide) => {
     setState((current) => ({

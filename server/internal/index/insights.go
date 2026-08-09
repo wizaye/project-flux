@@ -31,7 +31,7 @@ func (s *Store) Facets() (domain.VaultFacets, error) {
 	return result, nil
 }
 
-func (s *Store) References(targetPath string) (domain.DocumentReferences, error) {
+func (s *Store) References(targetPath string, includeUnlinked bool) (domain.DocumentReferences, error) {
 	result := domain.DocumentReferences{
 		Linked:   []domain.DocumentReference{},
 		Unlinked: []domain.DocumentReference{},
@@ -62,6 +62,36 @@ func (s *Store) References(targetPath string) (domain.DocumentReferences, error)
 	}
 	sort.Strings(result.Outgoing)
 	if !s.ftsEnabled {
+		return result, nil
+	}
+	if !includeUnlinked {
+		sources := make([]string, 0, len(linkedSources))
+		for source := range linkedSources {
+			sources = append(sources, source)
+		}
+		if len(sources) == 0 {
+			return result, nil
+		}
+		var rows []struct {
+			RelativePath string
+			Content      string
+		}
+		if err := s.db.Raw(
+			"SELECT relative_path, content FROM files_fts WHERE relative_path IN ?", sources,
+		).Scan(&rows).Error; err != nil {
+			return result, err
+		}
+		for _, row := range rows {
+			for _, link := range extractLinks(row.Content) {
+				if linkMatchesTarget(link.target, row.RelativePath, targetPath) {
+					line, excerpt := referenceLocation(row.Content, link.position)
+					result.Linked = append(result.Linked, domain.DocumentReference{
+						Source: row.RelativePath, Line: line, Excerpt: excerpt,
+					})
+				}
+			}
+		}
+		sortReferences(result.Linked)
 		return result, nil
 	}
 

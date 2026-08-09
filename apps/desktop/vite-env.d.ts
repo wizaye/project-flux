@@ -4,6 +4,9 @@ interface Window {
   electronAPI?: {
     ping: () => Promise<string>;
     getWindowId: () => Promise<string>;
+    hideWindow: () => Promise<void>;
+    getMCPServerCommand: () => Promise<{ command: string; args: string[] }>;
+    onCommand: (handler: (command: string) => void) => () => void;
     checkForUpdates: () => Promise<{
       isDev: boolean;
       isPackaged: boolean;
@@ -15,7 +18,9 @@ interface Window {
       memoryMB: number;
     }>;
     setTheme: (theme: "dark" | "light" | "system") => Promise<void>;
+    setMenuBarIconEnabled: (enabled: boolean) => Promise<void>;
     openWindow: (url: string) => Promise<void>;
+    onBeforeClose: (handler: () => Promise<void>) => () => void;
     exportPdf: (options: {
       title: string;
       pageSize: "A4" | "Letter";

@@ -58,7 +58,16 @@ describe("plugin tooling", () => {
       entry: "dist/main.js",
       contributes: {
         commands: [{ id: "example.plugin.open", title: "Open" }],
-        views: [{ id: "example.plugin.panel", title: "Panel", entry: "dist/panel.html" }],
+        views: [
+          {
+            id: "example.plugin.panel",
+            title: "Panel",
+            entry: "dist/panel.html",
+            location: "right-sidebar",
+            icon: "panel-right",
+            iconPath: "dist/icon.svg",
+          },
+        ],
         settings: [{ id: "example.plugin.limit", title: "Limit", type: "number", default: 10 }],
       },
     };
@@ -67,12 +76,40 @@ describe("plugin tooling", () => {
     expect(() => validateManifest(manifest)).toThrow("must be scoped");
   });
 
+  test("rejects unsafe view locations and icons", () => {
+    const view = {
+      id: "example.plugin.panel",
+      title: "Panel",
+      entry: "dist/panel.html",
+      location: "right-sidebar",
+      icon: "panel-right",
+    };
+    const manifest = {
+      schemaVersion: 1,
+      id: "example.plugin",
+      name: "Example",
+      version: "1.0.0",
+      apiVersion: "1",
+      entry: "dist/main.js",
+      contributes: { views: [view] },
+    };
+    view.location = "host-dom";
+    expect(() => validateManifest(manifest)).toThrow("location must be");
+    view.location = "modal";
+    view.icon = "<svg>";
+    expect(() => validateManifest(manifest)).toThrow("supported built-in icon");
+    view.icon = "panel-right";
+    view.iconPath = "../icon.svg";
+    expect(() => validateManifest(manifest)).toThrow("clean relative .svg path");
+  });
+
   test("packs built files as a checksumed ZIP", () => {
     const root = join(temporary(), "packed-plugin");
     createPlugin(root);
     mkdirSync(join(root, "dist"));
     writeFileSync(join(root, "dist/main.js"), "export default {};\n");
     const output = packPlugin(root);
+    expect(packPlugin(root)).toBe(output);
     const bundle = readFileSync(output);
     expect(bundle.readUInt32LE(0)).toBe(0x04034b50);
     expect(packageChecksum(output)).toMatch(/^[a-f0-9]{64}$/);

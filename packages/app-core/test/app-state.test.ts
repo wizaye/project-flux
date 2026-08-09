@@ -2,18 +2,8 @@ import { beforeEach, describe, expect, test } from "bun:test";
 
 import { browserStatePersistence, useAppStore } from "../src/app-state";
 
-const values = new Map<string, string>();
-Object.defineProperty(globalThis, "localStorage", {
-  value: {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => values.set(key, value),
-    removeItem: (key: string) => values.delete(key),
-  },
-});
-
 describe("app state", () => {
   beforeEach(() => {
-    values.clear();
     useAppStore.setState({
       hydrated: false,
       vaultId: null,
@@ -41,23 +31,62 @@ describe("app state", () => {
     expect(useAppStore.getState()).not.toHaveProperty("documents");
   });
 
-  test("migrates legacy per-vault tab sessions", async () => {
-    values.set(
-      "flux-vault-session:vault-1",
-      JSON.stringify({
-        tabs: [{ path: "Notes/One.md", mode: "read", pinned: true }],
-        activePath: "Notes/One.md",
-      })
-    );
+  test("keeps settings changed while hydration is in flight", () => {
+    useAppStore.getState().setSetting("theme", "dark");
+    useAppStore.getState().hydrate({ theme: "light", spellcheck: true });
 
-    const session = await browserStatePersistence.loadWorkspaceSession("main", "vault-1");
+    expect(useAppStore.getState()).toMatchObject({
+      hydrated: true,
+      settings: { theme: "dark", spellcheck: true },
+    });
+  });
 
-    expect(session).toMatchObject({
+  test("keeps workspace only while setting the same vault", () => {
+    const session = {
       version: 1,
       vaultId: "vault-1",
       activePath: "Notes/One.md",
       tabs: [{ id: 1, path: "Notes/One.md", mode: "read", pinned: true }],
-      workspaceRoot: { kind: "leaf", tabIds: [1], activeTabId: 1 },
+      workspaceRoot: {
+        kind: "leaf",
+        id: 1,
+        view: "editor",
+        tabIds: [1],
+        activeTabId: 1,
+      },
+      activeLeafId: 1,
+      leftSidebarPane: "files",
+      rightSidebarPane: "backlinks",
+    } as const;
+
+    useAppStore.getState().setVault({ id: "vault-1", name: "Notes" });
+    useAppStore.getState().setWorkspace(session);
+    useAppStore.getState().setVault({ id: "vault-1", name: "Notes renamed" });
+    expect(useAppStore.getState().workspace).toBe(session);
+
+    useAppStore.getState().setVault({ id: "vault-2", name: "Other" });
+    expect(useAppStore.getState().workspace).toBeNull();
+  });
+
+  test("uses volatile fallback without browser storage", async () => {
+    const session = {
+      version: 1,
+      vaultId: "volatile-vault",
+      tabs: [],
+      workspaceRoot: { kind: "leaf", id: 1, view: "editor", tabIds: [], activeTabId: 1 },
+      activeLeafId: 1,
+      leftSidebarPane: "files",
+      rightSidebarPane: "backlinks",
+    } as const;
+
+    await browserStatePersistence.saveWorkspaceSession("volatile-window", session);
+    await browserStatePersistence.saveAppSetting("theme", "dark");
+
+    await expect(
+      browserStatePersistence.loadWorkspaceSession("volatile-window", "volatile-vault")
+    ).resolves.toEqual(session);
+    await expect(browserStatePersistence.loadAppSettings()).resolves.toMatchObject({
+      theme: "dark",
     });
   });
 });

@@ -19,6 +19,7 @@ import (
 	application "github.com/flux-pkm/server/internal/app"
 	"github.com/flux-pkm/server/internal/appdata"
 	"github.com/flux-pkm/server/internal/config"
+	"github.com/flux-pkm/server/internal/modelproviders"
 	"github.com/flux-pkm/server/internal/plugins"
 	"github.com/flux-pkm/server/internal/runtimecoord"
 	"github.com/flux-pkm/server/internal/vault"
@@ -37,7 +38,7 @@ func main() {
 	cfg := config.Load()
 	runtimeLock, err := runtimecoord.Acquire(filepath.Join(cfg.AppDataDir, "runtime", "daemon.lock"))
 	if errors.Is(err, runtimecoord.ErrLocked) {
-		log.Fatal("Another Flux runtime already owns this app-data directory")
+		log.Fatal("Another Flux runtime already owns this app-data directory. If the desktop app is open, it already provides the backend; do not run dev:server separately")
 	}
 	if err != nil {
 		log.Fatalf("Failed to acquire Flux runtime: %v", err)
@@ -89,6 +90,14 @@ func main() {
 	}
 	pluginManager.SetRegistry(pluginRegistry)
 
+	// Initialize model providers service
+	modelProviderService, err := modelproviders.NewService(cfg.AppDataDir)
+	if err != nil {
+		log.Printf("Failed to initialize model providers service: %v", err)
+		// Continue without model providers service - it's not critical for basic functionality
+		modelProviderService = nil
+	}
+
 	// Set Gin mode
 	if cfg.Environment == "production" || cfg.Environment == "desktop" {
 		gin.SetMode(gin.ReleaseMode)
@@ -119,7 +128,12 @@ func main() {
 	})
 
 	// Register API routes
-	api.RegisterRoutes(router, appService, api.WithAppData(appData), api.WithDesktopToken(cfg.DesktopToken), api.WithPlugins(pluginManager))
+	var routeOptions []api.RouteOption
+	routeOptions = append(routeOptions, api.WithAppData(appData), api.WithDesktopToken(cfg.DesktopToken), api.WithPlugins(pluginManager))
+	if modelProviderService != nil {
+		routeOptions = append(routeOptions, api.WithModelProviders(modelProviderService))
+	}
+	api.RegisterRoutes(router, appService, routeOptions...)
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {

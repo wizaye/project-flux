@@ -69,8 +69,37 @@ func TestPluginLifecycleAndRetainedVaultState(t *testing.T) {
 	if _, err := os.Stat(stateFile); err != nil {
 		t.Fatalf("per-vault state was removed: %v", err)
 	}
-	if err := manager.Uninstall("example.plugin", "1.0.0"); !errors.Is(err, ErrPluginActive) {
-		t.Fatalf("expected active uninstall rejection, got %v", err)
+	if err := manager.Uninstall("example.plugin", "1.0.0"); err != nil {
+		t.Fatalf("active uninstall failed: %v", err)
+	}
+	if _, err := store.Active("example.plugin"); !errors.Is(err, ErrPluginNotFound) {
+		t.Fatalf("active pointer retained: %v", err)
+	}
+}
+
+func TestActiveUninstallRepairsMissingActivePointer(t *testing.T) {
+	appData := t.TempDir()
+	store, err := OpenMetadataStore(filepath.Join(appData, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	manager, err := NewManager(appData, store, testRuntime{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installTestPackage(t, manager, "1.0.0")
+	if err := manager.Activate(context.Background(), "example.plugin", "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Delete(&ActivePlugin{}, "plugin_id = ?", "example.plugin").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Uninstall("example.plugin", "1.0.0"); err != nil {
+		t.Fatalf("stale active plugin could not be removed: %v", err)
+	}
+	if _, err := store.Version("example.plugin", "1.0.0"); !errors.Is(err, ErrPluginNotFound) {
+		t.Fatalf("plugin metadata retained: %v", err)
 	}
 }
 
@@ -131,7 +160,7 @@ func TestPackageValidationRejectsChecksumAndTraversal(t *testing.T) {
 	}
 }
 
-func TestConcurrentInstallAllowsOneWinner(t *testing.T) {
+func TestConcurrentInstallIsIdempotent(t *testing.T) {
 	appData := t.TempDir()
 	store, err := OpenMetadataStore(filepath.Join(appData, "app.db"))
 	if err != nil {
@@ -159,19 +188,71 @@ func TestConcurrentInstallAllowsOneWinner(t *testing.T) {
 	}
 	wait.Wait()
 	close(errorsSeen)
-	var succeeded, existed int
+	var succeeded int
 	for err := range errorsSeen {
-		switch {
-		case err == nil:
+		if err == nil {
 			succeeded++
-		case errors.Is(err, ErrVersionExists):
-			existed++
-		default:
+		} else {
 			t.Fatalf("unexpected install result: %v", err)
 		}
 	}
-	if succeeded != 1 || existed != 1 {
-		t.Fatalf("expected one winner and one existing result; got %d, %d", succeeded, existed)
+	if succeeded != 2 {
+		t.Fatalf("expected two idempotent results; got %d", succeeded)
+	}
+}
+
+func TestActiveDevelopmentBuildReloadsSameVersion(t *testing.T) {
+	appData := t.TempDir()
+	store, err := OpenMetadataStore(filepath.Join(appData, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	manager, err := NewManager(appData, store, testRuntime{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installTestPackage(t, manager, "1.0.0")
+	if err := manager.Activate(context.Background(), "example.plugin", "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	archive := createPackageFromManifest(t, testManifest("1.0.0"), "dist/main.js", "updated")
+	checksum, _ := checksumFile(archive)
+	result, err := manager.InstallPackage(context.Background(), archive, checksum)
+	if err != nil || result.Plugin.Status != StatusActive {
+		t.Fatalf("reload failed: %#v, %v", result, err)
+	}
+	if result.Plugin.Development {
+		t.Fatal("normal local install unexpectedly enabled development mode")
+	}
+	result, err = manager.InstallDevelopmentPackage(context.Background(), archive, checksum)
+	if err != nil || !result.Plugin.Development {
+		t.Fatalf("explicit development mode was not persisted for unchanged build: %#v, %v", result, err)
+	}
+	stored, err := store.Version("example.plugin", "1.0.0")
+	if err != nil || !stored.Development {
+		t.Fatalf("stored development mode is missing: %#v, %v", stored, err)
+	}
+	content, err := os.ReadFile(filepath.Join(result.Plugin.InstallPath, "dist/main.js"))
+	if err != nil || string(content) != "updated" {
+		t.Fatalf("new bundle not installed: %q, %v", content, err)
+	}
+	changed := testManifest("1.0.0")
+	changed.Description = "updated development manifest"
+	archive = createPackageFromManifest(t, changed, "dist/main.js", "updated again")
+	checksum, _ = checksumFile(archive)
+	result, err = manager.InstallDevelopmentPackage(context.Background(), archive, checksum)
+	if err != nil || result.Manifest.Description != changed.Description {
+		t.Fatalf("development manifest reload failed: %#v, %v", result, err)
+	}
+	if !result.Plugin.Development {
+		t.Fatal("development reload did not persist development mode")
+	}
+	changed.RequiredPermissions = append(changed.RequiredPermissions, "vault.write")
+	archive = createPackageFromManifest(t, changed, "dist/main.js", "unsafe")
+	checksum, _ = checksumFile(archive)
+	if _, err = manager.InstallDevelopmentPackage(context.Background(), archive, checksum); err == nil {
+		t.Fatal("development reload changed required permissions")
 	}
 }
 
@@ -189,6 +270,34 @@ func TestManifestRejectsUnknownCapability(t *testing.T) {
 	manifest.RequiredPermissions = []string{"vault.root"}
 	if err := manifest.Validate(); err == nil {
 		t.Fatal("expected unsupported capability rejection")
+	}
+}
+
+func TestManifestValidatesSafeViewPlacement(t *testing.T) {
+	manifest := testManifest("1.0.0")
+	manifest.Contributions.Views = []ViewContribution{{
+		ID: "example.plugin.panel", Title: "Panel", Entry: "dist/panel.html",
+		Location: "right-sidebar", Icon: "panel-right", IconPath: "dist/icon.svg",
+	}}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("safe view placement rejected: %v", err)
+	}
+	if got := (ViewContribution{}).EffectiveLocation(); got != "left-sidebar" {
+		t.Fatalf("default view location = %q, want left-sidebar", got)
+	}
+	manifest.Contributions.Views[0].Location = "host-dom"
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("expected unsupported view location rejection")
+	}
+	manifest.Contributions.Views[0].Location = "workspace"
+	manifest.Contributions.Views[0].IconPath = "../icon.svg"
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("expected unsafe view icon path rejection")
+	}
+	manifest.Contributions.Views[0].IconPath = ""
+	manifest.Contributions.Views[0].Icon = "<svg>"
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("expected unsupported view icon rejection")
 	}
 }
 
@@ -328,7 +437,7 @@ func createTestPackage(t *testing.T, version, entryName string) string {
 	return createPackageFromManifest(t, testManifest(version), entryName)
 }
 
-func createPackageFromManifest(t *testing.T, manifest Manifest, entryName string) string {
+func createPackageFromManifest(t *testing.T, manifest Manifest, entryName string, source ...string) string {
 	t.Helper()
 	archivePath := filepath.Join(t.TempDir(), "plugin.zip")
 	archiveFile, err := os.Create(archivePath)
@@ -340,9 +449,13 @@ func createPackageFromManifest(t *testing.T, manifest Manifest, entryName string
 	if err != nil {
 		t.Fatal(err)
 	}
+	entrySource := "export function activate() {}"
+	if len(source) != 0 {
+		entrySource = source[0]
+	}
 	for name, contents := range map[string][]byte{
 		ManifestFile: manifestBytes,
-		entryName:    []byte("export function activate() {}"),
+		entryName:    []byte(entrySource),
 	} {
 		entry, err := writer.Create(name)
 		if err != nil {

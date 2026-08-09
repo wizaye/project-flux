@@ -178,6 +178,10 @@ func (w *Watcher) run() {
 				continue
 			}
 			relative = filepath.ToSlash(relative)
+			if event.flags&C.kFSEventStreamEventFlagItemIsFile != 0 &&
+				!files.IsSupportedVaultFile(relative) {
+				continue
+			}
 			op := OpWrite
 			if event.flags&(C.kFSEventStreamEventFlagMustScanSubDirs|C.kFSEventStreamEventFlagUserDropped|C.kFSEventStreamEventFlagKernelDropped|C.kFSEventStreamEventFlagEventIdsWrapped|C.kFSEventStreamEventFlagRootChanged|C.kFSEventStreamEventFlagMount|C.kFSEventStreamEventFlagUnmount) != 0 {
 				relative, op = "", OpReconcile

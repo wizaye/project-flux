@@ -38,4 +38,8 @@ func TestPolicyScopesCapabilitiesAndApprovals(t *testing.T) {
 	if err := policy.Authorize(context.Background(), "vault-a", VaultDelete, "delete note.md"); !errors.Is(err, ErrAccessDenied) {
 		t.Fatalf("missing delete capability allowed: %v", err)
 	}
+	policy.SetValidator(func(context.Context) error { return errors.New("revoked") })
+	if err := policy.Authorize(context.Background(), "vault-a", VaultRead, "read note.md"); !errors.Is(err, ErrAccessDenied) {
+		t.Fatalf("revoked principal allowed: %v", err)
+	}
 }

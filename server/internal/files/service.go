@@ -281,6 +281,24 @@ func (s *Service) Patch(relativePath, expectedHash string, edits []domain.TextEd
 }
 
 func (s *Service) Move(sourcePath, destinationPath string) (domain.FileEntry, error) {
+	return s.move(sourcePath, destinationPath, nil, nil)
+}
+
+// MoveIndexed uses the completed vault index to avoid walking and reading every
+// Markdown file for link rewrites on each move.
+func (s *Service) MoveIndexed(
+	sourcePath, destinationPath string,
+	entries []domain.FileEntry,
+	linkSources []string,
+) (domain.FileEntry, error) {
+	return s.move(sourcePath, destinationPath, entries, linkSources)
+}
+
+func (s *Service) move(
+	sourcePath, destinationPath string,
+	entries []domain.FileEntry,
+	linkSources []string,
+) (domain.FileEntry, error) {
 	s.tree.Lock()
 	defer s.tree.Unlock()
 	source, normalizedSource, err := s.resolve(sourcePath)
@@ -307,7 +325,17 @@ func (s *Service) Move(sourcePath, destinationPath string) (domain.FileEntry, er
 	if strings.HasPrefix(normalizedDestination, normalizedSource+"/") {
 		return domain.FileEntry{}, ErrInvalidPath
 	}
-	rewrites, err := s.planLinkRewrites(normalizedSource, normalizedDestination)
+	var rewrites []linkRewrite
+	if entries != nil && linkSources != nil {
+		rewrites, err = s.planLinkRewritesFromCatalog(
+			normalizedSource,
+			normalizedDestination,
+			entries,
+			linkSources,
+		)
+	} else {
+		rewrites, err = s.planLinkRewrites(normalizedSource, normalizedDestination)
+	}
 	if err != nil {
 		return domain.FileEntry{}, err
 	}

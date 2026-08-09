@@ -1,18 +1,10 @@
-import {
-  createContext,
-  useContext,
-  useLayoutEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useContext, useLayoutEffect, useMemo, type ReactNode } from "react";
 
 export type Theme = "dark" | "light" | "system";
 
 interface ThemeProviderProps {
   children: ReactNode;
-  defaultTheme?: Theme;
-  storageKey?: string;
+  theme: Theme;
   onThemeChange?: (theme: Theme) => void;
 }
 
@@ -35,40 +27,25 @@ function applyTheme(theme: Theme) {
   document.documentElement.classList.toggle("light", resolvedTheme === "light");
 }
 
-export function ThemeProvider({
-  children,
-  defaultTheme = "system",
-  storageKey = "flux-ui-theme",
-  onThemeChange,
-}: ThemeProviderProps) {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    const savedTheme = localStorage.getItem(storageKey);
-    return savedTheme === "dark" || savedTheme === "light" || savedTheme === "system"
-      ? savedTheme
-      : defaultTheme;
-  });
-
+export function ThemeProvider({ children, theme, onThemeChange }: ThemeProviderProps) {
   useLayoutEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     const applySystemTheme = () => applyTheme(theme);
 
     applySystemTheme();
-    onThemeChange?.(theme);
     if (theme === "system") mediaQuery.addEventListener("change", applySystemTheme);
 
     return () => mediaQuery.removeEventListener("change", applySystemTheme);
-  }, [onThemeChange, theme]);
+  }, [theme]);
 
   const value = useMemo<ThemeProviderState>(
     () => ({
       theme,
       setTheme: (nextTheme) => {
-        applyTheme(nextTheme);
-        localStorage.setItem(storageKey, nextTheme);
-        setThemeState(nextTheme);
+        if (nextTheme !== theme) onThemeChange?.(nextTheme);
       },
     }),
-    [storageKey, theme]
+    [onThemeChange, theme]
   );
 
   return <ThemeProviderContext.Provider value={value}>{children}</ThemeProviderContext.Provider>;

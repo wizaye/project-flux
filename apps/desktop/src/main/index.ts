@@ -1,4 +1,15 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type WebContents } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  Tray,
+  type WebContents,
+} from "electron";
 import { autoUpdater } from "electron-updater";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
@@ -6,8 +17,14 @@ import { fileURLToPath } from "node:url";
 import * as path from "path";
 
 let mainWindow: BrowserWindow | null = null;
+let quickCaptureWindow: BrowserWindow | null = null;
+let menuBarTray: Tray | null = null;
 let backendProcess: ChildProcess | null = null;
 const vaultEventStreams = new Map<string, AbortController>();
+const closeReadyWindows = new Set<number>();
+const closePendingWindows = new Set<number>();
+let quitAfterFlush = false;
+let allowQuit = false;
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -16,7 +33,12 @@ const externalBackendOrigin = process.env.FLUX_BACKEND_URL;
 let backendOrigin = externalBackendOrigin ?? "";
 let backendToken = "";
 let backendHeartbeat: ReturnType<typeof setInterval> | null = null;
+let backendStartup: Promise<void> | null = null;
 const backendStartupAttempts = 300;
+
+function fluxAppDataDirectory() {
+  return process.env.FLUX_APP_DATA_DIR ?? path.join(app.getPath("appData"), "Flux");
+}
 
 interface RuntimeDescriptor {
   pid: number;
@@ -29,7 +51,7 @@ interface RuntimeDescriptor {
 async function attachPublishedBackend() {
   try {
     const descriptor = JSON.parse(
-      await readFile(path.join(app.getPath("userData"), "runtime", "daemon.json"), "utf8")
+      await readFile(path.join(fluxAppDataDirectory(), "runtime", "daemon.json"), "utf8")
     ) as Partial<RuntimeDescriptor>;
     const origin = new URL(descriptor.origin ?? "");
     if (
@@ -54,9 +76,8 @@ async function attachPublishedBackend() {
 async function stopStalePublishedBackend(force = false) {
   try {
     const descriptor = JSON.parse(
-      await readFile(path.join(app.getPath("userData"), "runtime", "daemon.json"), "utf8")
+      await readFile(path.join(fluxAppDataDirectory(), "runtime", "daemon.json"), "utf8")
     ) as Partial<RuntimeDescriptor>;
-    if (!force && !isDev && descriptor.version === app.getVersion()) return;
     if (!Number.isInteger(descriptor.pid) || descriptor.pid! <= 0 || !descriptor.token) return;
     const origin = new URL(descriptor.origin ?? "");
     if (
@@ -65,13 +86,16 @@ async function stopStalePublishedBackend(force = false) {
     ) {
       return;
     }
-    const response = await fetch(`${origin.origin}/api/v1/status`, {
-      headers: { "X-Flux-Desktop-Token": descriptor.token },
-      signal: AbortSignal.timeout(1_000),
-    });
-    if (!response.ok) return;
-    const status = (await response.json()) as { version?: unknown };
-    if (status.version !== descriptor.version) return;
+    try {
+      const response = await fetch(`${origin.origin}/api/v1/status`, {
+        headers: { "X-Flux-Desktop-Token": descriptor.token },
+        signal: AbortSignal.timeout(1_000),
+      });
+      const status = response.ok ? ((await response.json()) as { version?: unknown }) : null;
+      if (!force && response.ok && status?.version === app.getVersion()) return;
+    } catch {
+      // Descriptor owner is alive but unreachable. Terminate it so startup can replace it.
+    }
     process.kill(descriptor.pid!, "SIGTERM");
     for (let attempt = 0; attempt < 50; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -180,15 +204,21 @@ async function ensureBackend() {
     throw new Error(`Configured FLUX backend is unavailable at ${externalBackendOrigin}`);
   }
 
-  if (!isDev && (await attachPublishedBackend()) && (await backendReady())) return;
-  await stopStalePublishedBackend(isDev || Boolean(backendOrigin));
+  if (isDev) {
+    // Vite main-process reloads must recompile Go instead of reattaching the
+    // healthy daemon built from the previous source revision.
+    await stopStalePublishedBackend(true);
+  } else {
+    if ((await attachPublishedBackend()) && (await backendReady())) return;
+    await stopStalePublishedBackend(Boolean(backendOrigin));
+  }
 
   const backendEnvironment = {
     ...process.env,
     ENVIRONMENT: "desktop",
     HOST: "127.0.0.1",
     PORT: "0",
-    FLUX_APP_DATA_DIR: app.getPath("userData"),
+    FLUX_APP_DATA_DIR: fluxAppDataDirectory(),
     FLUX_DESKTOP_TOKEN: "",
     FLUX_DAEMON_IDLE_TIMEOUT: "2m",
   };
@@ -219,6 +249,34 @@ async function ensureBackend() {
   throw new Error("FLUX backend did not become ready");
 }
 
+function resumeQuitIfReady() {
+  if (!quitAfterFlush || closePendingWindows.size > 0 || allowQuit) return;
+  allowQuit = true;
+  app.quit();
+}
+
+function finishWindowFlush(window: BrowserWindow, windowId: number) {
+  if (!closePendingWindows.delete(windowId)) return;
+  if (quitAfterFlush) {
+    resumeQuitIfReady();
+    return;
+  }
+  if (window.isDestroyed()) return;
+  closeReadyWindows.add(windowId);
+  window.close();
+}
+
+function requestWindowFlush(window: BrowserWindow, windowId: number) {
+  if (closePendingWindows.has(windowId)) return;
+  if (window.isDestroyed() || window.webContents.isDestroyed()) {
+    return;
+  }
+  closePendingWindows.add(windowId);
+  window.webContents.send("flux-before-close");
+  const timeout = setTimeout(() => finishWindowFlush(window, windowId), 5_000);
+  timeout.unref();
+}
+
 function createWindow(targetUrl?: string) {
   const window = new BrowserWindow({
     width: 1200,
@@ -230,6 +288,7 @@ function createWindow(targetUrl?: string) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webviewTag: true,
     },
     titleBarStyle: "hiddenInset",
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1a" : "#e8e8e8",
@@ -237,29 +296,210 @@ function createWindow(targetUrl?: string) {
 
   if (process.platform === "darwin") {
     window.setWindowButtonVisibility(true);
-    window.setWindowButtonPosition({ x: 14, y: 18 });
+    window.setWindowButtonPosition({ x: 14, y: 16 });
   }
 
-  if (devServerUrl) {
-    void window.loadURL(targetUrl ?? devServerUrl);
-  } else {
-    if (targetUrl?.startsWith("file:")) void window.loadFile(fileURLToPath(targetUrl));
-    else void window.loadFile(path.join(currentDirectory, "../dist/index.html"));
-  }
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      import('electron').then(({ shell }) => {
+        shell.openExternal(url);
+      });
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
+
+  const loadWindowContent = () => {
+    if (devServerUrl) {
+      return window.loadURL(targetUrl ?? devServerUrl);
+    }
+    if (targetUrl?.startsWith("file:")) return window.loadFile(fileURLToPath(targetUrl));
+    return window.loadFile(path.join(currentDirectory, "../dist/index.html"));
+  };
+  void loadWindowContent();
+
+  let lastRendererRecovery = 0;
+  window.webContents.on("render-process-gone", (_event, details) => {
+    if (
+      details.reason === "clean-exit" ||
+      window.isDestroyed() ||
+      Date.now() - lastRendererRecovery < 5_000
+    ) {
+      return;
+    }
+    lastRendererRecovery = Date.now();
+    setTimeout(() => {
+      if (!window.isDestroyed()) void loadWindowContent();
+    }, 250).unref();
+  });
 
   if (!mainWindow) mainWindow = window;
+  const windowId = window.webContents.id;
+  window.on("close", (event) => {
+    if (allowQuit || closeReadyWindows.delete(windowId)) return;
+    if (window.webContents.isDestroyed()) return;
+    event.preventDefault();
+    requestWindowFlush(window, windowId);
+  });
   window.on("closed", () => {
+    closePendingWindows.delete(windowId);
+    closeReadyWindows.delete(windowId);
     if (mainWindow === window) mainWindow = null;
+    resumeQuitIfReady();
   });
 
   return window;
 }
 
+function showQuickCapture() {
+  if (quickCaptureWindow && !quickCaptureWindow.isDestroyed()) {
+    quickCaptureWindow.show();
+    quickCaptureWindow.focus();
+    return;
+  }
+  const window = new BrowserWindow({
+    width: 460,
+    height: 360,
+    minWidth: 400,
+    minHeight: 320,
+    show: false,
+    alwaysOnTop: true,
+    fullscreenable: false,
+    maximizable: false,
+    title: "Quick Capture",
+    titleBarStyle: "hiddenInset",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1c1d1a" : "#f5f5f2",
+    webPreferences: {
+      preload: path.join(currentDirectory, "preload/index.mjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  if (process.platform === "darwin") window.setWindowButtonPosition({ x: 14, y: 14 });
+  quickCaptureWindow = window;
+  if (devServerUrl) {
+    const url = new URL(devServerUrl);
+    url.searchParams.set("quickCapture", "1");
+    void window.loadURL(url.toString());
+  } else {
+    void window.loadFile(path.join(currentDirectory, "../dist/index.html"), {
+      query: { quickCapture: "1" },
+    });
+  }
+  window.once("ready-to-show", () => window.show());
+  window.on("closed", () => {
+    if (quickCaptureWindow === window) quickCaptureWindow = null;
+  });
+}
+
+function showMainWindow(command?: string) {
+  if (process.platform === "darwin") app.dock?.show();
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow();
+  const sendCommand = () => command && window.webContents.send("flux-command", command);
+  if (window.webContents.isLoadingMainFrame()) window.webContents.once("did-finish-load", sendCommand);
+  else sendCommand();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
+function dispatchCommand(command: string) {
+  showMainWindow(command);
+}
+
+function setMenuBarIconEnabled(enabled: boolean) {
+  if (process.platform !== "darwin") return;
+  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: enabled });
+  if (!enabled) {
+    menuBarTray?.destroy();
+    menuBarTray = null;
+    return;
+  }
+  if (menuBarTray) return;
+  const icon = nativeImage.createFromDataURL(
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAOUlEQVR4nGNgGOzgPxRTpJksQ9A1k2QILs1EGUJIM15DiNWM0xCKDaDYC1QJREKGkAQo0oxuyCAGAIXVU60eHgTUAAAAAElFTkSuQmCC"
+  );
+  icon.setTemplateImage(true);
+  menuBarTray = new Tray(icon);
+  menuBarTray.setToolTip("FLUX quick actions");
+  menuBarTray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "Quick Capture", accelerator: "Control+Option+Space", click: showQuickCapture },
+      { label: "Open Today’s Note", click: () => dispatchCommand("daily-today") },
+      { label: "Search Notes…", click: () => dispatchCommand("search") },
+      { type: "separator" },
+      { label: "Open FLUX", click: () => showMainWindow() },
+      { label: "Settings…", click: () => dispatchCommand("settings") },
+      { type: "separator" },
+      { role: "quit" },
+    ])
+  );
+}
+
+async function menuBarIconEnabled() {
+  try {
+    const response = await fetch(`${backendOrigin}/api/v1/app-settings`, {
+      headers: backendHeaders(),
+    });
+    if (!response.ok) return true;
+    const settings = (await response.json()) as Record<string, unknown>;
+    const fluxSettings = settings.fluxSettings as Record<string, unknown> | undefined;
+    const general = fluxSettings?.general as Record<string, unknown> | undefined;
+    return general?.showMenuBarIcon !== false;
+  } catch {
+    return true;
+  }
+}
+
+function installApplicationMenu() {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(process.platform === "darwin"
+        ? [{ label: app.name, submenu: [{ role: "about" as const }, { role: "quit" as const }] }]
+        : []),
+      {
+        label: "File",
+        submenu: [
+          { label: "New Window", accelerator: "CmdOrCtrl+Shift+N", click: () => createWindow() },
+          { label: "Quick Capture", accelerator: "Control+Alt+Space", click: showQuickCapture },
+          { type: "separator" },
+          { role: "close" },
+        ],
+      },
+      {
+        label: "Navigate",
+        submenu: [
+          { label: "Search", accelerator: "CmdOrCtrl+Shift+F", click: () => dispatchCommand("search") },
+          { label: "Today's Note", click: () => dispatchCommand("daily-today") },
+        ],
+      },
+      {
+        label: "Workspace",
+        submenu: [
+          { label: "Calendar", click: () => dispatchCommand("calendar") },
+          { label: "Settings", accelerator: "CmdOrCtrl+,", click: () => dispatchCommand("settings") },
+        ],
+      },
+      { role: "editMenu" },
+      { role: "viewMenu" },
+      { role: "windowMenu" },
+    ])
+  );
+}
+
 app.whenReady().then(async () => {
-  await ensureBackend();
+  const openedAtLogin =
+    process.platform === "darwin" && app.isPackaged && app.getLoginItemSettings().wasOpenedAtLogin;
+  backendStartup = ensureBackend();
+  if (openedAtLogin) app.dock?.hide();
+  else createWindow();
+  await backendStartup;
+  installApplicationMenu();
+  setMenuBarIconEnabled(await menuBarIconEnabled());
+  globalShortcut.register("Control+Option+Space", showQuickCapture);
   backendHeartbeat = setInterval(() => void backendReady(), 30_000);
   backendHeartbeat.unref();
-  createWindow();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -274,7 +514,22 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (allowQuit) return;
+  event.preventDefault();
+  quitAfterFlush = true;
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window === quickCaptureWindow) {
+      window.destroy();
+      continue;
+    }
+    requestWindowFlush(window, window.webContents.id);
+  }
+  resumeQuitIfReady();
+});
+
+app.on("will-quit", () => {
+  globalShortcut.unregisterAll();
   // Shared runtime may still serve MCP clients after Electron closes.
   if (backendHeartbeat) clearInterval(backendHeartbeat);
   backendHeartbeat = null;
@@ -287,6 +542,40 @@ ipcMain.handle("ping", async () => {
 
 ipcMain.handle("get-window-id", (event) => {
   return mainWindow?.webContents.id === event.sender.id ? "main" : `window-${event.sender.id}`;
+});
+
+ipcMain.handle("hide-window", (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.hide();
+});
+
+ipcMain.handle("get-mcp-server-command", () => {
+  if (app.isPackaged) {
+    return {
+      command: path.join(
+        process.resourcesPath,
+        process.platform === "win32" ? "flux-server.exe" : "flux-server"
+      ),
+      args: ["mcp"],
+    };
+  }
+  return {
+    command: process.env.GO_BIN ?? "/usr/local/go/bin/go",
+    args: [
+      "-C",
+      path.resolve(currentDirectory, "../../../server"),
+      "run",
+      "-tags",
+      "sqlite_fts5",
+      ".",
+      "mcp",
+    ],
+  };
+});
+
+ipcMain.on("flux-close-ready", (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || window.isDestroyed()) return;
+  finishWindowFlush(window, event.sender.id);
 });
 
 ipcMain.handle("select-vault-directory", async (_event, mode: unknown) => {
@@ -302,6 +591,7 @@ ipcMain.handle("select-vault-directory", async (_event, mode: unknown) => {
 });
 
 ipcMain.handle("flux-fetch", async (_event, request: unknown) => {
+  await backendStartup;
   if (!request || typeof request !== "object") throw new TypeError("Invalid Flux request");
   const value = request as { url?: unknown; method?: unknown; body?: unknown };
   if (typeof value.url !== "string" || !value.url.startsWith("/api/v1/")) {
@@ -434,6 +724,11 @@ ipcMain.handle("set-native-theme", (_event, theme: unknown) => {
   }
 
   nativeTheme.themeSource = theme;
+});
+
+ipcMain.handle("set-menu-bar-icon-enabled", (_event, enabled: unknown) => {
+  if (typeof enabled !== "boolean") throw new TypeError("Invalid menu bar icon setting");
+  setMenuBarIconEnabled(enabled);
 });
 
 ipcMain.handle("open-window", (_event, target: unknown) => {

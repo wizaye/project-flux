@@ -11,6 +11,7 @@ import (
 	"time"
 
 	application "github.com/flux-pkm/server/internal/app"
+	"github.com/flux-pkm/server/internal/appdata"
 	"github.com/flux-pkm/server/internal/capability"
 	"github.com/flux-pkm/server/internal/config"
 	"github.com/flux-pkm/server/internal/daemonclient"
@@ -22,30 +23,79 @@ import (
 func runMCPBridge(arguments []string) error {
 	flags := flag.NewFlagSet("flux mcp", flag.ContinueOnError)
 	vaultPath := flags.String("vault", "", "vault directory exposed to this MCP client")
+	connectionID := flags.String("connection", "", "saved MCP connection ID")
+	connectionSecret := flags.String("secret", "", "saved MCP connection secret")
 	clientID := flags.String("client", "local-mcp", "stable MCP client identity")
 	modeValue := flags.String("mode", string(capability.ReadOnly), "read_only, guided_write, or trusted_workspace")
 	appData := flags.String("app-data", "", "Flux app-data directory")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
-	if *vaultPath == "" {
-		return errors.New("--vault is required")
+	if *connectionSecret == "" {
+		*connectionSecret = os.Getenv("FLUX_MCP_SECRET")
 	}
-	mode := capability.ApprovalMode(*modeValue)
-	if mode != capability.ReadOnly && mode != capability.Guided && mode != capability.Trusted {
-		return errors.New("--mode must be read_only, guided_write, or trusted_workspace")
+	if *vaultPath == "" && (*connectionID == "" || *connectionSecret == "") {
+		return errors.New("--connection and --secret are required; use --vault only for development")
+	}
+	if *vaultPath != "" && *connectionID != "" {
+		return errors.New("--vault cannot be combined with a saved --connection")
 	}
 	cfg := config.Load()
 	if *appData != "" {
 		cfg.AppDataDir = *appData
 	}
+	grantedVaults := make(map[string]bool)
+	var connectionStore *appdata.Store
+	if *connectionID != "" {
+		store, err := appdata.Open(filepath.Join(cfg.AppDataDir, "app.db"))
+		if err != nil {
+			return err
+		}
+		connection, authErr := store.AuthenticateMCPConnection(*connectionID, *connectionSecret)
+		recent, recentErr := store.RecentVaults()
+		if authErr != nil {
+			_ = store.Close()
+			return errors.New("invalid or revoked MCP connection")
+		}
+		if recentErr != nil {
+			_ = store.Close()
+			return recentErr
+		}
+		connectionStore = store
+		defer connectionStore.Close()
+		*clientID = connection.ID
+		*modeValue = connection.Mode
+		allowed := make(map[string]bool, len(connection.VaultIDs))
+		for _, vaultID := range connection.VaultIDs {
+			allowed[vaultID] = true
+		}
+		for _, recentVault := range recent {
+			if allowed[recentVault.VaultID] {
+				grantedVaults[recentVault.Path] = true
+			}
+		}
+		if len(grantedVaults) != len(allowed) {
+			return errors.New("one or more granted vaults are no longer available")
+		}
+	}
+	mode := capability.ApprovalMode(*modeValue)
+	if mode != capability.ReadOnly && mode != capability.Guided && mode != capability.Trusted {
+		return errors.New("--mode must be read_only, guided_write, or trusted_workspace")
+	}
 	client, err := connectDaemon(context.Background(), cfg.AppDataDir)
 	if err != nil {
 		return err
 	}
-	vault, err := client.OpenVault(context.Background(), *vaultPath)
-	if err != nil {
-		return fmt.Errorf("open MCP vault: %w", err)
+	if *vaultPath != "" {
+		grantedVaults[*vaultPath] = true
+	}
+	vaultIDs := make(map[string]bool, len(grantedVaults))
+	for path := range grantedVaults {
+		vault, openErr := client.OpenVault(context.Background(), path)
+		if openErr != nil {
+			return fmt.Errorf("open MCP vault: %w", openErr)
+		}
+		vaultIDs[vault.ID] = true
 	}
 	grants := map[capability.Capability]bool{capability.VaultRead: true}
 	if mode != capability.ReadOnly {
@@ -59,15 +109,23 @@ func runMCPBridge(arguments []string) error {
 	}
 	policy, err := capability.NewPolicy(capability.Principal{
 		ID: *clientID, Mode: mode,
-		Vaults: map[string]bool{vault.ID: true}, Capabilities: grants,
+		Vaults: vaultIDs, Capabilities: grants,
 	}, approver)
 	if err != nil {
 		return err
 	}
+	if connectionStore != nil {
+		policy.SetValidator(func(context.Context) error {
+			_, validateErr := connectionStore.AuthenticateMCPConnection(*connectionID, *connectionSecret)
+			return validateErr
+		})
+	}
 	server := mcpserver.New(client, policy, application.Version)
 	runContext, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go keepDaemonAlive(runContext, client, vault.ID)
+	for vaultID := range vaultIDs {
+		go keepDaemonAlive(runContext, client, vaultID)
+	}
 	return server.Run(runContext, &mcp.StdioTransport{})
 }
 

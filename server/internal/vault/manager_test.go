@@ -1,9 +1,11 @@
 package vault
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -98,6 +100,123 @@ func TestIdleContextIsEvicted(t *testing.T) {
 	if _, err := manager.Get(old.VaultInfo().ID); !errors.Is(err, ErrNotOpen) {
 		t.Fatalf("expected idle context eviction, got %v", err)
 	}
+}
+
+func TestContextLimitEvictsLeastRecentlyUsed(t *testing.T) {
+	manager := NewManager("", true)
+	t.Cleanup(func() { _ = manager.Close() })
+	contexts := make([]*Context, 0, maxVaultContexts)
+	now := time.Now()
+	for index := 0; index < maxVaultContexts; index++ {
+		context, err := manager.Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		context.lastUsed.Store(now.Add(time.Duration(index-30) * time.Second).UnixNano())
+		contexts = append(contexts, context)
+	}
+
+	newest, err := manager.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Get(contexts[0].VaultInfo().ID); !errors.Is(err, ErrNotOpen) {
+		t.Fatalf("least recently used context was retained: %v", err)
+	}
+	for _, context := range append(contexts[1:], newest) {
+		if _, err := manager.Get(context.VaultInfo().ID); err != nil {
+			t.Fatalf("recent context was evicted: %v", err)
+		}
+	}
+	manager.mu.RLock()
+	count := len(manager.contexts)
+	manager.mu.RUnlock()
+	if count != maxVaultContexts {
+		t.Fatalf("expected %d contexts, got %d", maxVaultContexts, count)
+	}
+}
+
+func TestReopeningContextProtectsItFromEviction(t *testing.T) {
+	manager := NewManager("", true)
+	t.Cleanup(func() { _ = manager.Close() })
+	root := t.TempDir()
+	protected, err := manager.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index < maxVaultContexts; index++ {
+		if _, err := manager.Open(t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	protected.lastUsed.Store(time.Now().Add(-vaultIdleTTL - time.Second).UnixNano())
+
+	reopened, err := manager.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened != protected {
+		t.Fatal("reopening warm vault replaced its context")
+	}
+	if _, err := manager.Get(protected.VaultInfo().ID); err != nil {
+		t.Fatalf("requested context was evicted: %v", err)
+	}
+}
+
+func TestContextLimitPreservesCurrentContext(t *testing.T) {
+	manager := NewManager("", true)
+	t.Cleanup(func() { _ = manager.Close() })
+	contexts := make([]*Context, 0, maxVaultContexts)
+	for index := 0; index < maxVaultContexts; index++ {
+		context, err := manager.Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		contexts = append(contexts, context)
+	}
+	now := time.Now()
+	contexts[2].lastUsed.Store(now.Add(-30 * time.Second).UnixNano())
+	contexts[0].lastUsed.Store(now.Add(-20 * time.Second).UnixNano())
+	contexts[1].lastUsed.Store(now.Add(-10 * time.Second).UnixNano())
+
+	if _, err := manager.Open(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Get(contexts[2].VaultInfo().ID); err != nil {
+		t.Fatalf("current context was evicted: %v", err)
+	}
+	if _, err := manager.Get(contexts[0].VaultInfo().ID); !errors.Is(err, ErrNotOpen) {
+		t.Fatalf("expected oldest idle context eviction, got %v", err)
+	}
+}
+
+func TestIdleEvictionPreservesActiveRevisionWaiter(t *testing.T) {
+	manager := NewManager("", true)
+	t.Cleanup(func() { _ = manager.Close() })
+	vaultContext, err := manager.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.mu.Lock()
+	manager.currentID = ""
+	manager.mu.Unlock()
+	vaultContext.lastUsed.Store(time.Now().Add(-vaultIdleTTL - time.Second).UnixNano())
+	waitContext, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		vaultContext.WaitRevision(waitContext, vaultContext.Revision.Load())
+		close(done)
+	}()
+	for vaultContext.waiters.Load() == 0 {
+		runtime.Gosched()
+	}
+
+	manager.evictIdle(time.Now(), "")
+	if _, err := manager.Get(vaultContext.VaultInfo().ID); err != nil {
+		t.Fatalf("active event stream was evicted: %v", err)
+	}
+	cancel()
+	<-done
 }
 
 func TestServerWithoutConfiguredRootRejectsArbitraryPaths(t *testing.T) {

@@ -73,6 +73,33 @@ func TestVaultFileLifecycle(t *testing.T) {
 	}
 }
 
+func TestVaultConfigUsesProtectedAtomicStorage(t *testing.T) {
+	root := t.TempDir()
+	manager := vault.NewManager(root, false)
+	t.Cleanup(func() { _ = manager.Close() })
+	service := NewService(manager)
+	info, err := service.OpenVault("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SaveVaultConfig(info.ID, []byte(`{"dailyFolder":"Journal"}`)); err != nil {
+		t.Fatal(err)
+	}
+	config, err := service.VaultConfig(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(config) != `{"dailyFolder":"Journal"}` {
+		t.Fatalf("unexpected config: %s", config)
+	}
+	if _, err := service.ReadFile(info.ID, ".flux/config.json"); err == nil {
+		t.Fatal("generic file API exposed protected vault metadata")
+	}
+	if err := service.SaveVaultConfig(info.ID, []byte(`{"dailyFolder":"../outside"}`)); err == nil {
+		t.Fatal("unsafe config path was accepted")
+	}
+}
+
 func TestInterruptedVaultPlanRecoversBeforeReopen(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "existing.md"), []byte("before"), 0o600); err != nil {

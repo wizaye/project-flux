@@ -83,6 +83,13 @@ func (w *Watcher) run() {
 				continue
 			}
 			relative = filepath.ToSlash(relative)
+			if !files.IsSupportedVaultFile(relative) &&
+				!event.Has(fsnotify.Remove) && !event.Has(fsnotify.Rename) {
+				info, statErr := os.Stat(event.Name)
+				if statErr != nil || !info.IsDir() {
+					continue
+				}
+			}
 			op := OpWrite
 			if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
 				op = OpRemove
