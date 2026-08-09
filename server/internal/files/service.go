@@ -281,6 +281,24 @@ func (s *Service) Patch(relativePath, expectedHash string, edits []domain.TextEd
 }
 
 func (s *Service) Move(sourcePath, destinationPath string) (domain.FileEntry, error) {
+	return s.move(sourcePath, destinationPath, nil, nil)
+}
+
+// MoveIndexed uses the completed vault index to avoid walking and reading every
+// Markdown file for link rewrites on each move.
+func (s *Service) MoveIndexed(
+	sourcePath, destinationPath string,
+	entries []domain.FileEntry,
+	linkSources []string,
+) (domain.FileEntry, error) {
+	return s.move(sourcePath, destinationPath, entries, linkSources)
+}
+
+func (s *Service) move(
+	sourcePath, destinationPath string,
+	entries []domain.FileEntry,
+	linkSources []string,
+) (domain.FileEntry, error) {
 	s.tree.Lock()
 	defer s.tree.Unlock()
 	source, normalizedSource, err := s.resolve(sourcePath)
@@ -307,7 +325,17 @@ func (s *Service) Move(sourcePath, destinationPath string) (domain.FileEntry, er
 	if strings.HasPrefix(normalizedDestination, normalizedSource+"/") {
 		return domain.FileEntry{}, ErrInvalidPath
 	}
-	rewrites, err := s.planLinkRewrites(normalizedSource, normalizedDestination)
+	var rewrites []linkRewrite
+	if entries != nil && linkSources != nil {
+		rewrites, err = s.planLinkRewritesFromCatalog(
+			normalizedSource,
+			normalizedDestination,
+			entries,
+			linkSources,
+		)
+	} else {
+		rewrites, err = s.planLinkRewrites(normalizedSource, normalizedDestination)
+	}
 	if err != nil {
 		return domain.FileEntry{}, err
 	}
@@ -571,11 +599,8 @@ func (s *Service) fileLock(resolvedPath string) *sync.Mutex {
 }
 
 func (s *Service) resolve(relativePath string) (string, string, error) {
-	if relativePath == "" || strings.ContainsRune(relativePath, '\x00') || path.IsAbs(relativePath) {
-		return "", "", ErrInvalidPath
-	}
-	normalized := path.Clean(strings.ReplaceAll(relativePath, "\\", "/"))
-	if normalized == "." || normalized == ".." || strings.HasPrefix(normalized, "../") || IsInternal(normalized) {
+	normalized, err := NormalizePath(relativePath)
+	if err != nil {
 		return "", "", ErrInvalidPath
 	}
 
@@ -585,6 +610,39 @@ func (s *Service) resolve(relativePath string) (string, string, error) {
 		return "", "", ErrInvalidPath
 	}
 	return resolved, normalized, nil
+}
+
+func NormalizePath(relativePath string) (string, error) {
+	if relativePath == "" || strings.ContainsRune(relativePath, '\x00') || path.IsAbs(relativePath) {
+		return "", ErrInvalidPath
+	}
+	normalized := path.Clean(strings.ReplaceAll(relativePath, "\\", "/"))
+	if normalized == "." || normalized == ".." || strings.HasPrefix(normalized, "../") || IsInternal(normalized) {
+		return "", ErrInvalidPath
+	}
+	return normalized, nil
+}
+
+// RemoveCreated removes only content whose hash still matches a just-created
+// plan result. It exists for vault-plan rollback and never removes directories.
+func (s *Service) RemoveCreated(relativePath, expectedHash string) error {
+	s.tree.Lock()
+	defer s.tree.Unlock()
+	resolvedPath, _, err := s.resolve(relativePath)
+	if err != nil {
+		return err
+	}
+	if err := rejectSymlinks(s.root, resolvedPath); err != nil {
+		return err
+	}
+	content, err := os.ReadFile(resolvedPath)
+	if err != nil {
+		return err
+	}
+	if expectedHash == "" || hash(content) != expectedHash {
+		return ErrConflict
+	}
+	return os.Remove(resolvedPath)
 }
 
 func rejectSymlinks(root, target string) error {

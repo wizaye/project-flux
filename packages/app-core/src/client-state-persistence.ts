@@ -20,6 +20,7 @@ function persistedWorkspace(value: unknown): PersistedWorkspaceSession | null {
 /** Persists UI snapshots through Flux backend global app storage. */
 export function createClientStatePersistence(client: FluxClient): FluxStatePersistence {
   let lastVaultId: string | null = null;
+  let settingWrites = Promise.resolve();
 
   return {
     async loadBootstrap(windowId) {
@@ -41,7 +42,12 @@ export function createClientStatePersistence(client: FluxClient): FluxStatePersi
       return client.getAppSettings();
     },
     saveAppSetting(key, value) {
-      return client.putAppSetting(key, value);
+      const write = settingWrites.then(() => client.putAppSetting(key, value));
+      settingWrites = write.then(
+        () => undefined,
+        () => undefined
+      );
+      return write;
     },
     async rememberVault(vault: RememberedVault) {
       lastVaultId = vault.id;

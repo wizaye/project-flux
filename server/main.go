@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log"
 	"net"
@@ -9,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -16,13 +19,35 @@ import (
 	application "github.com/flux-pkm/server/internal/app"
 	"github.com/flux-pkm/server/internal/appdata"
 	"github.com/flux-pkm/server/internal/config"
+	"github.com/flux-pkm/server/internal/modelproviders"
+	"github.com/flux-pkm/server/internal/plugins"
+	"github.com/flux-pkm/server/internal/runtimecoord"
 	"github.com/flux-pkm/server/internal/vault"
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		if err := runMCPBridge(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	// Load configuration
 	cfg := config.Load()
+	runtimeLock, err := runtimecoord.Acquire(filepath.Join(cfg.AppDataDir, "runtime", "daemon.lock"))
+	if errors.Is(err, runtimecoord.ErrLocked) {
+		log.Fatal("Another Flux runtime already owns this app-data directory. If the desktop app is open, it already provides the backend; do not run dev:server separately")
+	}
+	if err != nil {
+		log.Fatalf("Failed to acquire Flux runtime: %v", err)
+	}
+	defer runtimeLock.Close()
+
+	if cfg.Environment == "desktop" && cfg.DesktopToken == "" {
+		cfg.DesktopToken = randomToken()
+	}
 
 	// The server starts without touching a vault. Persistent state is initialized
 	// only after OpenVault succeeds for the configured vault path.
@@ -47,6 +72,31 @@ func main() {
 			log.Printf("Failed to close app data: %v", err)
 		}
 	}()
+	pluginStore, err := plugins.NewMetadataStore(appData.Database(), false)
+	if err != nil {
+		log.Fatalf("Failed to open plugin metadata: %v", err)
+	}
+	pluginManager, err := plugins.NewManager(cfg.AppDataDir, pluginStore, plugins.BundleRuntime{})
+	if err != nil {
+		log.Fatalf("Failed to initialize plugins: %v", err)
+	}
+	pluginRegistry, err := plugins.NewRegistry(
+		cfg.PluginRegistryURL,
+		cfg.PluginRegistrySignatureURL,
+		cfg.PluginRegistryPublicKey,
+	)
+	if err != nil {
+		log.Fatalf("Failed to configure plugin marketplace: %v", err)
+	}
+	pluginManager.SetRegistry(pluginRegistry)
+
+	// Initialize model providers service
+	modelProviderService, err := modelproviders.NewService(cfg.AppDataDir)
+	if err != nil {
+		log.Printf("Failed to initialize model providers service: %v", err)
+		// Continue without model providers service - it's not critical for basic functionality
+		modelProviderService = nil
+	}
 
 	// Set Gin mode
 	if cfg.Environment == "production" || cfg.Environment == "desktop" {
@@ -55,6 +105,12 @@ func main() {
 
 	// Create router
 	router := gin.Default()
+	var lastActivity atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
+	router.Use(func(c *gin.Context) {
+		lastActivity.Store(time.Now().UnixNano())
+		c.Next()
+	})
 
 	// Setup CORS for the browser shell. Electron uses its preload bridge.
 	router.Use(func(c *gin.Context) {
@@ -72,7 +128,12 @@ func main() {
 	})
 
 	// Register API routes
-	api.RegisterRoutes(router, appService, api.WithAppData(appData), api.WithDesktopToken(cfg.DesktopToken))
+	var routeOptions []api.RouteOption
+	routeOptions = append(routeOptions, api.WithAppData(appData), api.WithDesktopToken(cfg.DesktopToken), api.WithPlugins(pluginManager))
+	if modelProviderService != nil {
+		routeOptions = append(routeOptions, api.WithModelProviders(modelProviderService))
+	}
+	api.RegisterRoutes(router, appService, routeOptions...)
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
@@ -81,27 +142,78 @@ func main() {
 
 	// Start server
 	address := cfg.Host + ":" + cfg.Port
-	log.Printf("Starting FLUX server on %s", address)
-	server := &http.Server{Addr: address, Handler: router, ReadHeaderTimeout: 10 * time.Second}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		log.Fatalf("Failed to listen on %s: %v", address, err)
+	}
+	defer listener.Close()
+	log.Printf("Starting FLUX server on %s", listener.Addr())
+	server := &http.Server{Handler: router, ReadHeaderTimeout: 10 * time.Second}
+	descriptorPath := filepath.Join(cfg.AppDataDir, "runtime", "daemon.json")
+	if cfg.Environment == "desktop" {
+		origin := "http://" + listener.Addr().String()
+		descriptor := runtimecoord.Descriptor{PID: os.Getpid(), Origin: origin, Token: cfg.DesktopToken, Version: application.Version, Protocol: 1}
+		if err := runtimecoord.WriteDescriptor(descriptorPath, descriptor); err != nil {
+			log.Fatalf("Failed to publish Flux runtime: %v", err)
+		}
+		defer os.Remove(descriptorPath)
+	}
 	failed := make(chan error, 1)
 	go func() {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			failed <- err
 		}
 		close(failed)
 	}()
 	shutdownSignal, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	idle := daemonIdleChannel(os.Getenv("FLUX_DAEMON_IDLE_TIMEOUT"), &lastActivity)
 	select {
 	case err := <-failed:
 		if err != nil {
 			log.Fatalf("Failed to start server: %v", err)
 		}
 	case <-shutdownSignal.Done():
-		shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownContext); err != nil {
-			log.Printf("Failed to shut down server cleanly: %v", err)
-		}
+	case <-idle:
+		log.Print("Flux daemon idle; shutting down")
 	}
+	shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownContext); err != nil {
+		log.Printf("Failed to shut down server cleanly: %v", err)
+	}
+}
+
+func daemonIdleChannel(value string, lastActivity *atomic.Int64) <-chan struct{} {
+	timeout, err := time.ParseDuration(value)
+	if value == "" || err != nil || timeout <= 0 {
+		return nil
+	}
+	idle := make(chan struct{})
+	go func() {
+		interval := timeout / 4
+		if interval > 30*time.Second {
+			interval = 30 * time.Second
+		}
+		if interval < time.Second {
+			interval = time.Second
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if time.Since(time.Unix(0, lastActivity.Load())) >= timeout {
+				close(idle)
+				return
+			}
+		}
+	}()
+	return idle
+}
+
+func randomToken() string {
+	buffer := make([]byte, 32)
+	if _, err := rand.Read(buffer); err != nil {
+		log.Fatalf("Failed to create desktop token: %v", err)
+	}
+	return hex.EncodeToString(buffer)
 }

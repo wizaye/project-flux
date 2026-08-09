@@ -43,4 +43,29 @@ describe("client state persistence", () => {
     });
     await expect(persistence.loadWorkspaceSession("main", "notes")).resolves.toBeNull();
   });
+
+  test("serializes app setting writes", async () => {
+    const calls: string[] = [];
+    let releaseFirst = () => undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const client = {
+      putAppSetting: mock(async (_key: string, value: unknown) => {
+        calls.push(`start:${String(value)}`);
+        if (value === "dark") await firstGate;
+        calls.push(`finish:${String(value)}`);
+      }),
+    } as unknown as FluxClient;
+    const persistence = createClientStatePersistence(client);
+
+    const first = persistence.saveAppSetting("theme", "dark");
+    const second = persistence.saveAppSetting("theme", "light");
+    await Promise.resolve();
+    expect(calls).toEqual(["start:dark"]);
+
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(calls).toEqual(["start:dark", "finish:dark", "start:light", "finish:light"]);
+  });
 });

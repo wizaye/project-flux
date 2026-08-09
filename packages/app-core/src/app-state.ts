@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import type { MarkdownMode } from "./markdown-editor";
+import type { BookmarkItem } from "./bookmark-store";
 import type { WorkspaceNode } from "./workspace-tree";
 import type { LeftPane, RightPane } from "./workspace-sidebars";
 import type { FluxLayoutState } from "@flux/shared-ui/hooks/use-flux-layout";
@@ -17,7 +18,9 @@ export interface IndexingProgress {
 
 export interface PersistedWorkspaceTab {
   id: number;
-  path: string;
+  path?: string;
+  kind?: "graph";
+  graphRootPath?: string;
   mode: MarkdownMode;
   pinned: boolean;
 }
@@ -27,6 +30,7 @@ export interface PersistedWorkspaceSession {
   vaultId: string;
   tabs: PersistedWorkspaceTab[];
   activePath?: string;
+  activeTabId?: number;
   workspaceRoot: WorkspaceNode;
   activeLeafId: number;
   leftSidebarPane: LeftPane;
@@ -66,6 +70,8 @@ interface AppState {
   indexing: IndexingProgress | null;
   workspace: PersistedWorkspaceSession | null;
   settings: Record<string, unknown>;
+  bookmarksByVault: Record<string, BookmarkItem[]>;
+  bookmarkGroupsByVault: Record<string, string[]>;
   hydrate(settings: Record<string, unknown>): void;
   setVault(
     vault: { id: string; name: string } | null,
@@ -75,6 +81,8 @@ interface AppState {
   setLifecycle(lifecycle: VaultLifecycleState, indexing?: IndexingProgress | null): void;
   setWorkspace(workspace: PersistedWorkspaceSession | null): void;
   setSetting(key: string, value: unknown): void;
+  setBookmarks(vaultId: string, bookmarks: BookmarkItem[]): void;
+  setBookmarkGroups(vaultId: string, groups: string[]): void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -85,14 +93,20 @@ export const useAppStore = create<AppState>((set) => ({
   indexing: null,
   workspace: null,
   settings: {},
-  hydrate: (settings) => set({ settings, hydrated: true }),
+  bookmarksByVault: {},
+  bookmarkGroupsByVault: {},
+  hydrate: (settings) =>
+    set((current) => ({
+      settings: { ...settings, ...current.settings },
+      hydrated: true,
+    })),
   setVault: (vault, lifecycle = vault ? "active" : "initializing", indexing = null) =>
     set((current) => ({
       vaultId: vault?.id ?? null,
       vaultName: vault?.name ?? null,
       lifecycle,
       indexing,
-      workspace: vault ? current.workspace : null,
+      workspace: vault && current.vaultId === vault.id ? current.workspace : null,
     })),
   setLifecycle: (lifecycle, indexing) =>
     set((current) => ({
@@ -102,74 +116,46 @@ export const useAppStore = create<AppState>((set) => ({
   setWorkspace: (workspace) => set({ workspace }),
   setSetting: (key, value) =>
     set((current) => ({ settings: { ...current.settings, [key]: value } })),
+  setBookmarks: (vaultId, bookmarks) =>
+    set((current) => ({
+      bookmarksByVault: { ...current.bookmarksByVault, [vaultId]: bookmarks },
+    })),
+  setBookmarkGroups: (vaultId, groups) =>
+    set((current) => ({
+      bookmarkGroupsByVault: { ...current.bookmarkGroupsByVault, [vaultId]: groups },
+    })),
 }));
 
-const LAST_VAULT_PATH_KEY = "flux-last-vault-path";
+let volatileLastVaultPath: string | null = null;
+const volatileWorkspaces = new Map<string, Map<string, PersistedWorkspaceSession>>();
+const volatileSettings: Record<string, unknown> = {};
 
-function workspaceStorageKey(windowId: string) {
-  return `flux-workspace-session:${windowId}`;
-}
-
-function parseWorkspace(
-  value: string | null,
-  legacyVaultId?: string
-): PersistedWorkspaceSession | null {
-  try {
-    const session = JSON.parse(value ?? "null") as
-      | PersistedWorkspaceSession
-      | { tabs?: Array<Omit<PersistedWorkspaceTab, "id">>; activePath?: string }
-      | null;
-    if (session && "version" in session && session.version === 1 && Array.isArray(session.tabs)) {
-      return session;
-    }
-    if (!legacyVaultId || !session?.tabs || !Array.isArray(session.tabs)) return null;
-    const tabs = session.tabs.map((tab, index) => ({ ...tab, id: index + 1 }));
-    const activeId = tabs.find((tab) => tab.path === session.activePath)?.id ?? tabs[0]?.id ?? 1;
-    return {
-      version: 1,
-      vaultId: legacyVaultId,
-      tabs,
-      activePath: session.activePath,
-      workspaceRoot: {
-        kind: "leaf",
-        id: 1,
-        view: "editor",
-        tabIds: tabs.map((tab) => tab.id),
-        activeTabId: activeId,
-      },
-      activeLeafId: 1,
-      leftSidebarPane: "files",
-      rightSidebarPane: "backlinks",
-    };
-  } catch {
-    return null;
-  }
-}
-
-/** Temporary browser fallback. Desktop/web runtimes replace this with global app SQLite. */
+/** In-memory fallback used only when a shell has no backend persistence adapter. */
 export const browserStatePersistence: FluxStatePersistence = {
   async loadBootstrap() {
-    return { lastVaultPath: localStorage.getItem(LAST_VAULT_PATH_KEY) };
+    return { lastVaultPath: volatileLastVaultPath };
   },
   async loadWorkspaceSession(windowId, vaultId) {
-    return (
-      parseWorkspace(localStorage.getItem(workspaceStorageKey(windowId))) ??
-      (vaultId
-        ? parseWorkspace(localStorage.getItem(`flux-vault-session:${vaultId}`), vaultId)
-        : null)
-    );
+    const sessions = volatileWorkspaces.get(windowId);
+    if (!sessions) return null;
+    if (vaultId) return sessions.get(vaultId) ?? null;
+    return [...sessions.values()].at(-1) ?? null;
   },
   async saveWorkspaceSession(windowId, session) {
-    localStorage.setItem(workspaceStorageKey(windowId), JSON.stringify(session));
+    const sessions = volatileWorkspaces.get(windowId) ?? new Map();
+    sessions.set(session.vaultId, session);
+    volatileWorkspaces.set(windowId, sessions);
   },
   async loadAppSettings() {
-    return {};
+    return { ...volatileSettings };
   },
-  async saveAppSetting() {},
+  async saveAppSetting(key, value) {
+    volatileSettings[key] = value;
+  },
   async rememberVault(vault) {
-    localStorage.setItem(LAST_VAULT_PATH_KEY, vault.path);
+    volatileLastVaultPath = vault.path;
   },
   async forgetLastVault() {
-    localStorage.removeItem(LAST_VAULT_PATH_KEY);
+    volatileLastVaultPath = null;
   },
 };

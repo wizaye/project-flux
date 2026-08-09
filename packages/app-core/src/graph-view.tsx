@@ -29,7 +29,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { DropdownMenu } from "radix-ui";
+import { MenuItem } from "@flux/shared-ui/components/ui/menu";
 import { Application, BitmapText, Color, Container, Graphics, Rectangle } from "pixi.js";
 import { FluxEditorPane } from "@flux/shared-ui/components/workspace-tab";
 import type { DemoDocument } from "./markdown-editor";
@@ -47,9 +47,6 @@ interface GraphViewProps {
   onSplitDown: () => void;
 }
 
-const graphMenuItem =
-  "flex h-8 cursor-default select-none items-center gap-2 rounded-md px-2 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground";
-
 function GraphViewMenu({
   bookmarked,
   onBookmarkChange,
@@ -65,18 +62,18 @@ function GraphViewMenu({
 }) {
   return (
     <>
-      <DropdownMenu.Item className={graphMenuItem} onSelect={onSplitRight}>
+      <MenuItem onClick={onSplitRight}>
         <PanelRightOpen className="size-4 text-muted-foreground" /> Split right
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={graphMenuItem} onSelect={onSplitDown}>
+      </MenuItem>
+      <MenuItem onClick={onSplitDown}>
         <PanelBottomOpen className="size-4 text-muted-foreground" /> Split down
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={graphMenuItem} onSelect={onCopyScreenshot}>
+      </MenuItem>
+      <MenuItem onClick={onCopyScreenshot}>
         <Camera className="size-4 text-muted-foreground" /> Copy screenshot
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={graphMenuItem} onSelect={() => onBookmarkChange(!bookmarked)}>
+      </MenuItem>
+      <MenuItem onClick={() => onBookmarkChange(!bookmarked)}>
         <Bookmark className="size-4 text-muted-foreground" /> Bookmark…
-      </DropdownMenu.Item>
+      </MenuItem>
     </>
   );
 }
@@ -268,7 +265,7 @@ export function GraphView({
   const [nodeSize, setNodeSize] = useState(1);
   const [linkThickness, setLinkThickness] = useState(1);
   const [groups, setGroups] = useState<Array<{ id: number; query: string; color: string }>>([]);
-  const [centerForce, setCenterForce] = useState(0.519);
+  const [centerForce, setCenterForce] = useState(0.5187132);
   const [repelForce, setRepelForce] = useState(10);
   const [linkForce, setLinkForce] = useState(1);
   const [linkDistance, setLinkDistance] = useState(250);
@@ -709,7 +706,7 @@ export function GraphView({
     setTextFadeThreshold(0);
     setNodeSize(1);
     setLinkThickness(1);
-    setCenterForce(0.519);
+    setCenterForce(0.5187132);
     setRepelForce(10);
     setLinkForce(1);
     setLinkDistance(250);
@@ -834,12 +831,12 @@ export function GraphView({
       }
     >
       <section
-        className="relative flex h-full min-h-0 flex-col bg-background"
+        className="relative flex h-full min-h-0 flex-col bg-sidebar"
         aria-label="Graph view"
       >
         <div
           ref={surfaceRef}
-          className="absolute inset-0 touch-none overflow-hidden bg-white dark:bg-background"
+          className="absolute inset-0 touch-none overflow-hidden bg-sidebar"
           role="img"
           aria-label="Knowledge graph"
           onPointerDown={(event) => {
@@ -1120,7 +1117,7 @@ export function GraphView({
                   type="range"
                   min="0"
                   max="1"
-                  step="0.001"
+                  step="0.0000001"
                   value={centerForce}
                   onChange={(event) => setCenterForce(Number(event.target.value))}
                 />

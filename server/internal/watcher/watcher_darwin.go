@@ -6,6 +6,7 @@ package watcher
 #cgo CFLAGS: -x objective-c
 #cgo LDFLAGS: -framework CoreServices -framework CoreFoundation
 #include <CoreServices/CoreServices.h>
+#include <dispatch/dispatch.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -13,7 +14,10 @@ extern void fluxFSEvent(uintptr_t handle, char *path, FSEventStreamEventFlags fl
 
 typedef struct {
     FSEventStreamRef stream;
+    dispatch_queue_t queue;
 } FluxFSEvents;
+
+static void fluxDrainQueue(void *unused) { (void)unused; }
 
 static void fluxCallback(ConstFSEventStreamRef streamRef, void *clientCallBackInfo,
                          size_t count, void *eventPaths,
@@ -42,10 +46,17 @@ static FluxFSEvents *fluxStartFSEvents(const char *path, uintptr_t handle) {
     );
     CFRelease(paths);
     if (stream == NULL) return NULL;
-    FSEventStreamSetDispatchQueue(stream, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+    dispatch_queue_t queue = dispatch_queue_create("app.flux.fsevents", DISPATCH_QUEUE_SERIAL);
+    if (queue == NULL) {
+        FSEventStreamInvalidate(stream);
+        FSEventStreamRelease(stream);
+        return NULL;
+    }
+    FSEventStreamSetDispatchQueue(stream, queue);
     if (!FSEventStreamStart(stream)) {
         FSEventStreamInvalidate(stream);
         FSEventStreamRelease(stream);
+        dispatch_release(queue);
         return NULL;
     }
     FluxFSEvents *watcher = calloc(1, sizeof(FluxFSEvents));
@@ -53,18 +64,23 @@ static FluxFSEvents *fluxStartFSEvents(const char *path, uintptr_t handle) {
         FSEventStreamStop(stream);
         FSEventStreamInvalidate(stream);
         FSEventStreamRelease(stream);
+        dispatch_release(queue);
         return NULL;
     }
     watcher->stream = stream;
+    watcher->queue = queue;
     return watcher;
 }
 
 static void fluxStopFSEvents(FluxFSEvents *watcher) {
     if (watcher == NULL) return;
-    FSEventStreamFlushSync(watcher->stream);
     FSEventStreamStop(watcher->stream);
     FSEventStreamInvalidate(watcher->stream);
+    // FSEvents dispatches asynchronously. Drain its private serial queue before
+    // Go deletes the cgo handle referenced by callbacks already in flight.
+    dispatch_sync_f(watcher->queue, NULL, fluxDrainQueue);
     FSEventStreamRelease(watcher->stream);
+    dispatch_release(watcher->queue);
     free(watcher);
 }
 */
@@ -162,6 +178,10 @@ func (w *Watcher) run() {
 				continue
 			}
 			relative = filepath.ToSlash(relative)
+			if event.flags&C.kFSEventStreamEventFlagItemIsFile != 0 &&
+				!files.IsSupportedVaultFile(relative) {
+				continue
+			}
 			op := OpWrite
 			if event.flags&(C.kFSEventStreamEventFlagMustScanSubDirs|C.kFSEventStreamEventFlagUserDropped|C.kFSEventStreamEventFlagKernelDropped|C.kFSEventStreamEventFlagEventIdsWrapped|C.kFSEventStreamEventFlagRootChanged|C.kFSEventStreamEventFlagMount|C.kFSEventStreamEventFlagUnmount) != 0 {
 				relative, op = "", OpReconcile

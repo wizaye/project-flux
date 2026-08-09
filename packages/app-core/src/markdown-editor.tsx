@@ -1,4 +1,13 @@
-import { Component, lazy, Suspense, useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   Bookmark,
   BookOpen,
@@ -31,10 +40,18 @@ import {
 import { GFM } from "@lezer/markdown";
 import { bracketMatching, indentOnInput, indentUnit } from "@codemirror/language";
 import { highlightSelectionMatches, openSearchPanel, searchKeymap } from "@codemirror/search";
-import { EditorState } from "@codemirror/state";
-import { EditorView, keymap, type Command } from "@codemirror/view";
+import { EditorState, StateField, StateEffect } from "@codemirror/state";
+import { EditorView, keymap, type Command, Decoration, type DecorationSet } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
-import { DropdownMenu } from "radix-ui";
+import {
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuItem,
+  MenuSeparator,
+  MenuSub as CossMenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+} from "@flux/shared-ui/components/ui/menu";
 import { Spinner } from "@flux/shared-ui/components/spinner";
 import { splitFrontmatter } from "./frontmatter";
 import { markdownAssist } from "./editor-assist";
@@ -42,7 +59,7 @@ import { livePreview } from "./live-preview";
 import { isMarkdownListLine, listIndentWidth, nestedOrderedMarkerEdit } from "./markdown-list";
 import { obsidianMarkdownExtensions } from "./obsidian-markdown";
 import { showRenderError } from "./render-feedback";
-import { linkedMentionsFor } from "./link-index";
+import { linkedMentionsFor, resolverFor, unlinkedMentionsFor } from "./link-index";
 
 const ReadingView = lazy(() => import("./reading-view"));
 
@@ -245,18 +262,52 @@ export const REFERENCE_DOCUMENTS: DemoDocument[] = [
   },
 ];
 
+const addHighlight = StateEffect.define<{ from: number; to: number }>();
+const removeHighlight = StateEffect.define<null>();
+
+const highlightField = StateField.define<DecorationSet>({
+  create() {
+    return Decoration.none;
+  },
+  update(highlights, tr) {
+    highlights = highlights.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(addHighlight)) {
+        highlights = highlights.update({
+          add: [
+            Decoration.mark({
+              class:
+                "bg-yellow-400/30 dark:bg-yellow-500/20 ring-2 ring-yellow-400/60 dark:ring-yellow-500/40 rounded-sm",
+            }).range(e.value.from, e.value.to),
+          ],
+        });
+      } else if (e.is(removeHighlight)) {
+        highlights = Decoration.none;
+      }
+    }
+    return highlights;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 function MarkdownSource({
   value,
   live,
   documents,
   findRequest,
+  revealRequest,
   onChange,
+  documentPath,
+  frontmatterLines = 0,
 }: {
   value: string;
   live: boolean;
   documents: DemoDocument[];
   findRequest: number;
+  revealRequest?: { line: number; request: number };
   onChange: (value: string) => void;
+  documentPath?: string;
+  frontmatterLines?: number;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -265,6 +316,73 @@ function MarkdownSource({
   const initialValueRef = useRef(value);
   const initialLiveRef = useRef(live);
   const initialDocumentsRef = useRef(documents);
+
+  const frontmatterLinesRef = useRef(frontmatterLines);
+  useEffect(() => {
+    frontmatterLinesRef.current = frontmatterLines;
+  }, [frontmatterLines]);
+
+  const documentPathRef = useRef(documentPath);
+  useEffect(() => {
+    documentPathRef.current = documentPath;
+  }, [documentPath]);
+
+  useEffect(() => {
+    let active = true;
+    const handleNavigate = (
+      event: CustomEvent<{ path: string; line: number; excerpt?: string }>
+    ) => {
+      const targetPath = event.detail.path;
+      if (documentPathRef.current === targetPath) {
+        const view = viewRef.current;
+        if (!view) return;
+
+        // Calculate body line number (1-based)
+        const totalLineNum = event.detail.line;
+        const bodyLineNum = Math.max(1, totalLineNum - frontmatterLinesRef.current);
+        const lineLimit = view.state.doc.lines;
+        const lineIndex = Math.min(bodyLineNum, lineLimit);
+
+        const line = view.state.doc.line(lineIndex);
+        let anchor = line.from;
+        let head = line.to;
+
+        if (event.detail.excerpt) {
+          // Find target match in the line if excerpt is provided
+          const text = line.text;
+          const cleanExcerpt = event.detail.excerpt.trim();
+          const index = text.toLowerCase().indexOf(cleanExcerpt.toLowerCase());
+          if (index !== -1) {
+            anchor = line.from + index;
+            head = anchor + cleanExcerpt.length;
+          }
+        }
+
+        view.focus();
+
+        // Dispatch highlight effect and update selection
+        view.dispatch({
+          selection: { anchor, head },
+          scrollIntoView: true,
+          effects: [addHighlight.of({ from: anchor, to: head })],
+        });
+
+        setTimeout(() => {
+          if (active) {
+            view.dispatch({
+              effects: [removeHighlight.of(null)],
+            });
+          }
+        }, 1500);
+      }
+    };
+
+    window.addEventListener("flux-navigate-editor", handleNavigate as EventListener);
+    return () => {
+      active = false;
+      window.removeEventListener("flux-navigate-editor", handleNavigate as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -289,6 +407,7 @@ function MarkdownSource({
           highlightSelectionMatches(),
           markdownAssist(() => documentsRef.current),
           initialLiveRef.current ? livePreview(initialDocumentsRef.current) : [],
+          highlightField,
           keymap.of([
             ...searchKeymap,
             { key: "Enter", run: insertNewlineContinueMarkup },
@@ -485,9 +604,12 @@ function MarkdownSource({
               display: "block",
               boxSizing: "border-box",
               width: "100%",
-              margin: "0.55rem 0",
-              cursor: "text",
+              margin: "0.25rem 0", // Reduced vertical spacing
+              cursor: "default",
+              userSelect: "none",
             },
+            ".cm-live-block > :first-child": { marginTop: "0" },
+            ".cm-live-block > :last-child": { marginBottom: "0" },
             ".cm-live-code-block pre": {
               margin: "0",
               overflowX: "auto",
@@ -545,24 +667,42 @@ function MarkdownSource({
             },
             ".cm-tooltip-autocomplete": {
               overflow: "hidden",
-              border: "1px solid var(--layout-separator) !important",
+              border: "1px solid var(--border) !important",
               borderRadius: "0.5rem !important",
               backgroundColor: "var(--popover) !important",
               color: "var(--popover-foreground) !important",
-              boxShadow: "0 10px 28px color-mix(in oklab, black 22%, transparent)",
-              padding: "0.25rem",
+              boxShadow: "0 8px 24px color-mix(in oklab, black 40%, transparent)",
+              padding: "0.5rem 0.6rem",
+              minWidth: "28rem",
+              maxHeight: "20rem !important",
             },
-            ".cm-tooltip-autocomplete > ul": { maxHeight: "18rem", fontFamily: "var(--font-sans)" },
+            ".cm-tooltip-autocomplete > ul": { maxHeight: "20rem !important", fontFamily: "var(--font-sans)" },
             ".cm-tooltip-autocomplete > ul > li": {
-              borderRadius: "0.3rem",
-              padding: "0.3rem 0.55rem",
-              lineHeight: "1.35",
+              borderRadius: "0.35rem",
+              padding: "0.85rem 0.75rem",
+              lineHeight: "1.5",
+              marginBottom: "0.6rem",
+            },
+            ".cm-tooltip-autocomplete > ul > li:last-child": {
+              marginBottom: "0",
             },
             ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
-              backgroundColor: "var(--accent)",
-              color: "var(--accent-foreground)",
+              backgroundColor: "var(--muted)",
+              color: "var(--foreground)",
             },
-            ".cm-completionDetail": { color: "var(--muted-foreground)", fontStyle: "normal" },
+            ".cm-completionLabel": {
+              display: "block",
+              fontSize: "0.85rem",
+              fontWeight: "400",
+            },
+            ".cm-completionDetail": {
+              display: "block",
+              color: "var(--muted-foreground)",
+              fontStyle: "normal",
+              fontSize: "0.65rem",
+              marginTop: "0.2rem",
+              marginLeft: "0",
+            },
             ".cm-line.cm-live-codeblock": {
               backgroundColor: "var(--card)",
               borderLeft: "1px solid var(--layout-separator)",
@@ -693,6 +833,16 @@ function MarkdownSource({
     view.focus();
   }, [findRequest]);
 
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!revealRequest || !view) return;
+    const line = view.state.doc.line(
+      Math.max(1, Math.min(revealRequest.line, view.state.doc.lines))
+    );
+    view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
+    view.focus();
+  }, [revealRequest]);
+
   return <div ref={hostRef} />;
 }
 
@@ -704,6 +854,7 @@ export function MarkdownEditor({
   onTitleCommit,
   showBacklinks,
   findRequest,
+  revealRequest,
   onDropDocument,
   onOpenDocument,
   documents = [],
@@ -715,23 +866,190 @@ export function MarkdownEditor({
   onTitleCommit?: (title: string) => void;
   showBacklinks: boolean;
   findRequest: number;
+  revealRequest?: {
+    heading: string;
+    line: number;
+    request: number;
+    absolute?: boolean;
+  };
   onDropDocument?: (title: string) => void;
-  onOpenDocument?: (title: string) => void;
+  onOpenDocument?: (identifier: string, inPlace?: boolean) => void;
   documents?: DemoDocument[];
 }) {
-  const { frontmatter, body } = splitFrontmatter(document.content);
-  const backlinkGroups = useMemo(() => {
-    const grouped = new Map<string, ReturnType<typeof linkedMentionsFor>>();
-    for (const mention of linkedMentionsFor(documents, document.path ?? document.title)) {
+  const editorRootRef = useRef<HTMLDivElement>(null);
+  const { frontmatter, body: rawBody } = splitFrontmatter(document.content);
+  const activeTitle = document.path ?? document.title;
+  const linkedMentions = useMemo(
+    () => (showBacklinks ? linkedMentionsFor(documents, activeTitle) : []),
+    [activeTitle, documents, showBacklinks]
+  );
+  const unlinkedMentions = useMemo(
+    () => (showBacklinks ? unlinkedMentionsFor(documents, activeTitle) : []),
+    [activeTitle, documents, showBacklinks]
+  );
+  const isDailyNote = useMemo(() => {
+    return document.path?.includes("Daily/") || /^\d{4}-\d{2}-\d{2}$/.test(document.title);
+  }, [document.path, document.title]);
+
+  const { body, strippedPrefix } = useMemo(() => {
+    if (!isDailyNote) return { body: rawBody, strippedPrefix: "" };
+    const heading = `# ${document.title}`;
+    const match = rawBody.match(/^([ \t]*)/);
+    const leadingWhitespace = match ? match[1] : "";
+    const trimmed = rawBody.slice(leadingWhitespace.length);
+    if (trimmed.startsWith(heading) && (trimmed.length === heading.length || trimmed[heading.length] === "\n")) {
+      const prefixEnd = leadingWhitespace.length + heading.length;
+      const afterHeading = rawBody[prefixEnd] === "\n" ? prefixEnd + 1 : prefixEnd;
+      return { body: rawBody.slice(afterHeading), strippedPrefix: rawBody.slice(0, afterHeading) };
+    }
+    return { body: rawBody, strippedPrefix: "" };
+  }, [rawBody, isDailyNote, document.title]);
+
+  const groupMentions = (mentions: ReturnType<typeof linkedMentionsFor>) => {
+    const grouped = new Map<string, typeof mentions>();
+    for (const mention of mentions) {
       const group = grouped.get(mention.source) ?? [];
       group.push(mention);
       grouped.set(mention.source, group);
     }
     return [...grouped];
-  }, [document.path, document.title, documents]);
+  };
+
+  const linkedGroups = useMemo(() => groupMentions(linkedMentions), [linkedMentions]);
+  const unlinkedGroups = useMemo(() => groupMentions(unlinkedMentions), [unlinkedMentions]);
+
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [linkedExpanded, setLinkedExpanded] = useState(true);
+  const [unlinkedExpanded, setUnlinkedExpanded] = useState(false);
+
+  const toggleGroup = (key: string, isCurrentlyExpanded: boolean) => {
+    setExpandedGroups((prev) => ({
+      ...prev,
+      [key]: !isCurrentlyExpanded,
+    }));
+  };
+
+  const titleFromPath = (path: string) => {
+    return (
+      path
+        .split("/")
+        .pop()
+        ?.replace(/\.(md|markdown)$/i, "") ?? path
+    );
+  };
+
+  const highlightQuery = (text: string, query: string) => {
+    if (!text) return null;
+    const cleanTarget =
+      query
+        .split("/")
+        .pop()
+        ?.replace(/\.(md|markdown)$/i, "") ?? query;
+    const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const targetEsc = escapeRegExp(cleanTarget);
+
+    const linkPattern = new RegExp(
+      `(\\[\\[[^\\]]*${targetEsc}[^\\]]*\\]\\]|\\[[^\\]]+\\]\\([^)]*${targetEsc}[^)]*\\)|${targetEsc})`,
+      "gi"
+    );
+
+    const parts = text.split(linkPattern);
+
+    return (
+      <span>
+        {parts.map((part, idx) =>
+          linkPattern.test(part) ? (
+            <mark
+              key={idx}
+              className="inline rounded border border-[#a68a26]/60 bg-[#685512]/40 px-1 py-0.5 font-mono text-[11px] font-medium text-[#ffe57f] shadow-xs"
+            >
+              {part}
+            </mark>
+          ) : (
+            <span key={idx}>{part}</span>
+          )
+        )}
+      </span>
+    );
+  };
+
+  const renderGroupList = (
+    groups: Array<[string, ReturnType<typeof linkedMentionsFor>]>,
+    defaultExpanded: boolean = false,
+    type: "linked" | "unlinked"
+  ) => (
+    <div className="space-y-3">
+      {groups.map(([source, mentions]) => {
+        const key = `${type}::${activeTitle}::${source}`;
+        const stored = expandedGroups[key];
+        const isExpanded = stored !== undefined ? stored : defaultExpanded;
+        return (
+          <div key={source} className="space-y-1.5">
+            <button
+              type="button"
+              onClick={() => toggleGroup(key, isExpanded)}
+              className="flex w-full items-center justify-between text-left text-xs font-semibold text-foreground outline-none group py-0.5"
+            >
+              <span className="flex items-center gap-1.5 min-w-0">
+                <ChevronRight
+                  className={`size-3.5 shrink-0 transition-transform text-muted-foreground ${isExpanded ? "rotate-90" : ""}`}
+                />
+                <span className="truncate">{titleFromPath(source)}</span>
+              </span>
+              <span className="text-[10px] text-muted-foreground font-mono">{mentions.length}</span>
+            </button>
+            {isExpanded && (
+              <div className="space-y-2">
+                {mentions.map((mention, idx) => (
+                  <button
+                    key={`${mention.line}-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      onOpenDocument?.(source);
+                      const detail = { path: source, line: mention.line, excerpt: mention.excerpt };
+                      const dispatch = () =>
+                        window.dispatchEvent(new CustomEvent("flux-navigate-editor", { detail }));
+                      dispatch();
+                      setTimeout(dispatch, 30);
+                      setTimeout(dispatch, 100);
+                      setTimeout(dispatch, 250);
+                    }}
+                    className="w-full text-left rounded-md border border-[var(--layout-separator)] bg-muted/20 p-2.5 hover:bg-accent/40 transition-colors outline-none block shadow-xs"
+                  >
+                    <div className="text-[11px] leading-relaxed text-muted-foreground/90 whitespace-pre-wrap break-words">
+                      {highlightQuery(mention.excerpt, document.title)}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const handleNavigate = (target: string) => {
+    const resolve = resolverFor(documents);
+    const resolvedPath = resolve(target, document);
+    if (resolvedPath) {
+      onOpenDocument?.(resolvedPath, true);
+    } else {
+      onOpenDocument?.(target, true);
+    }
+  };
+
+  useEffect(() => {
+    if (!revealRequest || mode !== "read" || !editorRootRef.current) return;
+    const heading = [...editorRootRef.current.querySelectorAll("h1,h2,h3,h4,h5,h6")].find(
+      (element) => element.textContent?.trim() === revealRequest.heading.trim()
+    );
+    heading?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [mode, revealRequest]);
 
   return (
     <div
+      ref={editorRootRef}
       className="flux-editor-scroll h-full min-h-0 overflow-y-auto overscroll-contain"
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
@@ -760,42 +1078,81 @@ export function MarkdownEditor({
           live={mode === "live"}
           documents={documents}
           findRequest={findRequest}
-          onChange={(value) => onChange(frontmatter + value)}
+          revealRequest={
+            revealRequest
+              ? {
+                  ...revealRequest,
+                  line: revealRequest.absolute
+                    ? Math.max(1, revealRequest.line - (frontmatter.split(/\r?\n/).length - 1))
+                    : revealRequest.line,
+                }
+              : undefined
+          }
+          onChange={(value) => onChange(frontmatter + strippedPrefix + value)}
+          documentPath={document.path ?? document.title}
+          frontmatterLines={frontmatter ? frontmatter.split("\n").length - 1 : 0}
         />
       ) : (
         <ReadingViewBoundary key={`${document.title}:${body}`}>
           <Suspense fallback={<RenderingState />}>
-            <ReadingView value={body} documents={documents} />
+            <ReadingView value={body} documents={documents} onNavigate={handleNavigate} />
           </Suspense>
         </ReadingViewBoundary>
       )}
       {showBacklinks ? (
-        <section className="mx-auto max-w-[760px] border-t px-9 py-5 [border-color:var(--layout-separator)]">
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Backlinks in document
-          </h2>
-          {backlinkGroups.length ? (
-            <div className="space-y-2">
-              {backlinkGroups.map(([source, mentions]) => (
-                <button
-                  key={source}
-                  type="button"
-                  onClick={() => onOpenDocument?.(source)}
-                  className="block w-full rounded-md px-2 py-2 text-left text-sm hover:bg-accent/60"
-                >
-                  <span className="font-medium text-foreground">{source}</span>
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    {mentions.length} {mentions.length === 1 ? "mention" : "mentions"}
-                  </span>
-                  <span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">
-                    {mentions[0]?.excerpt}
-                  </span>
-                </button>
+        <section className="mx-auto max-w-[760px] border-t px-9 py-6 space-y-6 [border-color:var(--layout-separator)]">
+          {/* Linked Mentions Section */}
+          {/* Linked Mentions Section */}
+          <div className="mb-6">
+            <button
+              className="flex w-full items-center justify-between py-1 font-medium text-foreground/80 mb-2 outline-none group hover:text-foreground transition-colors"
+              onClick={() => setLinkedExpanded((prev) => !prev)}
+            >
+              <div className="flex items-center gap-1.5 min-w-0">
+                <ChevronRight
+                  className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${linkedExpanded ? "rotate-90 text-foreground" : "group-hover:text-foreground"}`}
+                />
+                <span className="text-[13px]">Linked mentions</span>
+              </div>
+              <span className="text-[12px] text-muted-foreground opacity-60">
+                {linkedMentions.length}
+              </span>
+            </button>
+            {linkedExpanded &&
+              (linkedGroups.length ? (
+                renderGroupList(linkedGroups, true, "linked")
+              ) : (
+                <p className="text-[11px] text-muted-foreground opacity-60 px-5">
+                  No backlinks found.
+                </p>
               ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No backlinks found.</p>
-          )}
+          </div>
+
+          {/* Unlinked Mentions Section */}
+          <div>
+            <button
+              className="flex w-full items-center justify-between py-1 font-medium text-foreground/80 mb-2 outline-none group hover:text-foreground transition-colors"
+              onClick={() => setUnlinkedExpanded((prev) => !prev)}
+            >
+              <div className="flex items-center gap-1.5 min-w-0">
+                <ChevronRight
+                  className={`size-3.5 shrink-0 transition-transform ${unlinkedExpanded ? "rotate-90 text-foreground" : "group-hover:text-foreground"}`}
+                />
+                <span className="text-[13px]">Unlinked mentions</span>
+              </div>
+              <span className="text-[12px] text-muted-foreground opacity-60">
+                {unlinkedMentions.length}
+              </span>
+            </button>
+            {unlinkedExpanded &&
+              (unlinkedGroups.length ? (
+                renderGroupList(unlinkedGroups, false, "unlinked")
+              ) : (
+                <p className="text-[11px] text-muted-foreground px-5">
+                  No unlinked mentions found.
+                </p>
+              ))}
+          </div>
         </section>
       ) : null}
     </div>
@@ -804,19 +1161,15 @@ export function MarkdownEditor({
 
 const menuItemClassName =
   "relative flex h-8 cursor-default select-none items-center gap-2 rounded-md px-2 pr-7 text-sm outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground";
-const separatorClassName = "my-1 h-px bg-[var(--layout-separator)]";
-const submenuClassName =
-  "z-[120] min-w-56 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg [border-color:var(--layout-separator)]";
-
 function MenuCheck() {
   return <Check className="absolute right-2 size-3.5" />;
 }
 
 function DisabledItem({ children }: { children: ReactNode }) {
   return (
-    <DropdownMenu.Item className={menuItemClassName} disabled>
+    <MenuItem className={menuItemClassName} disabled>
       {children}
-    </DropdownMenu.Item>
+    </MenuItem>
   );
 }
 
@@ -830,18 +1183,15 @@ function MenuSub({
   children: ReactNode;
 }) {
   return (
-    <DropdownMenu.Sub>
-      <DropdownMenu.SubTrigger className={menuItemClassName}>
+    <CossMenuSub>
+      <MenuSubTrigger className={menuItemClassName}>
         {icon}
         {label}
-        <ChevronRight className="absolute right-2 size-3.5" />
-      </DropdownMenu.SubTrigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.SubContent sideOffset={4} className={submenuClassName}>
-          {children}
-        </DropdownMenu.SubContent>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Sub>
+      </MenuSubTrigger>
+      <MenuSubPopup sideOffset={4} className="z-[120] min-w-56">
+        {children}
+      </MenuSubPopup>
+    </CossMenuSub>
   );
 }
 
@@ -890,138 +1240,127 @@ export function MarkdownDocumentMenu({
   const fileName = `${title || "Untitled"}.md`;
 
   return (
-    <DropdownMenu.Group className="max-h-[min(72vh,38rem)] overflow-y-auto">
-      <DropdownMenu.CheckboxItem
+    <MenuGroup>
+      <MenuCheckboxItem
         checked={showBacklinks}
         onCheckedChange={onBacklinksChange}
-        className={menuItemClassName}
       >
-        <Network className="size-4 text-muted-foreground" />
         Backlinks in document
-        <DropdownMenu.ItemIndicator>
-          <MenuCheck />
-        </DropdownMenu.ItemIndicator>
-      </DropdownMenu.CheckboxItem>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={() => onModeChange("read")}>
+      </MenuCheckboxItem>
+      <MenuItem className={menuItemClassName} onClick={() => onModeChange("read")}>
         <BookOpen className="size-4 text-muted-foreground" />
         Reading view{mode === "read" ? <MenuCheck /> : null}
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={() => onModeChange("live")}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={() => onModeChange("live")}>
         <Eye className="size-4 text-muted-foreground" />
         Live Preview{mode === "live" ? <MenuCheck /> : null}
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={() => onModeChange("source")}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={() => onModeChange("source")}>
         <Pencil className="size-4 text-muted-foreground" />
         Source mode{mode === "source" ? <MenuCheck /> : null}
-      </DropdownMenu.Item>
-      <DropdownMenu.Separator className={separatorClassName} />
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onSplitRight}>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem className={menuItemClassName} onClick={onSplitRight}>
         <PanelRightOpen className="size-4" />
         Split right
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onSplitDown}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={onSplitDown}>
         <PanelBottomOpen className="size-4" />
         Split down
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onMoveToNewWindow}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={onMoveToNewWindow}>
         <ExternalLink className="size-4" />
         Open in new window
-      </DropdownMenu.Item>
-      <DropdownMenu.Separator className={separatorClassName} />
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onRename}>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem className={menuItemClassName} onClick={onRename}>
         <FilePenLine className="size-4 text-muted-foreground" />
         Rename…
-      </DropdownMenu.Item>
+      </MenuItem>
       <DisabledItem>
         <FolderInput className="size-4" />
         Move file to…
       </DisabledItem>
-      <DropdownMenu.CheckboxItem
-        checked={bookmarked}
-        onCheckedChange={onBookmarkChange}
-        className={menuItemClassName}
-      >
+      <MenuItem className={menuItemClassName} onClick={() => onBookmarkChange(true)}>
         <Bookmark className="size-4 text-muted-foreground" />
         Bookmark…
-        <DropdownMenu.ItemIndicator>
-          <MenuCheck />
-        </DropdownMenu.ItemIndicator>
-      </DropdownMenu.CheckboxItem>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onMerge}>
+        {bookmarked ? <MenuCheck /> : null}
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={onMerge}>
         <Merge className="size-4" />
         Merge entire file with…
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onAddProperty}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={onAddProperty}>
         <ListPlus className="size-4 text-muted-foreground" />
         Add file property
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onExportPdf}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={onExportPdf}>
         <FileDown className="size-4 text-muted-foreground" />
         Export to PDF…
-      </DropdownMenu.Item>
-      <DropdownMenu.Separator className={separatorClassName} />
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onFind}>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem className={menuItemClassName} onClick={onFind}>
         <Search className="size-4 text-muted-foreground" />
         Find…
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onFind}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={onFind}>
         <Pencil className="size-4 text-muted-foreground" />
         Replace…
-      </DropdownMenu.Item>
+      </MenuItem>
       <MenuSub label="Copy path" icon={<Copy className="size-4 text-muted-foreground" />}>
-        <DropdownMenu.Item
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => copy(`flux://open?file=${encodeURIComponent(fileName)}`)}
+          onClick={() => copy(`flux://open?file=${encodeURIComponent(fileName)}`)}
         >
           as Flux URL
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
+        </MenuItem>
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => copy(`Personal vault/${fileName}`)}
+          onClick={() => copy(`Personal vault/${fileName}`)}
         >
           from vault folder
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
+        </MenuItem>
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => copy(`/Personal vault/${fileName}`)}
+          onClick={() => copy(`/Personal vault/${fileName}`)}
         >
           from system root
-        </DropdownMenu.Item>
+        </MenuItem>
       </MenuSub>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onVersionHistory}>
+      <MenuItem className={menuItemClassName} onClick={onVersionHistory}>
         <History className="size-4" />
         Open version history
-      </DropdownMenu.Item>
+      </MenuItem>
       <MenuSub label="Open linked view" icon={<Network className="size-4 text-muted-foreground" />}>
-        <DropdownMenu.Item className={menuItemClassName} onSelect={() => onOpenLinkedView("graph")}>
+        <MenuItem className={menuItemClassName} onClick={() => onOpenLinkedView("graph")}>
           Open local graph
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
+        </MenuItem>
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => onOpenLinkedView("backlinks")}
+          onClick={() => onOpenLinkedView("backlinks")}
         >
           Open backlinks
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
+        </MenuItem>
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => onOpenLinkedView("outgoing")}
+          onClick={() => onOpenLinkedView("outgoing")}
         >
           Open outgoing links
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
+        </MenuItem>
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => onOpenLinkedView("properties")}
+          onClick={() => onOpenLinkedView("properties")}
         >
           Open file properties
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
+        </MenuItem>
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => onOpenLinkedView("outline")}
+          onClick={() => onOpenLinkedView("outline")}
         >
           Open outline
-        </DropdownMenu.Item>
+        </MenuItem>
       </MenuSub>
-      <DropdownMenu.Separator className={separatorClassName} />
+      <MenuSeparator />
       <DisabledItem>
         <ExternalLink className="size-4" />
         Open in default app
@@ -1030,22 +1369,23 @@ export function MarkdownDocumentMenu({
         <FolderInput className="size-4" />
         Reveal in Finder
       </DisabledItem>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onRevealInNavigation}>
+      <MenuItem className={menuItemClassName} onClick={onRevealInNavigation}>
         <FolderInput className="size-4" />
         Reveal file in navigation
-      </DropdownMenu.Item>
-      <DropdownMenu.Item
-        className={`${menuItemClassName} text-destructive data-[highlighted]:text-destructive`}
-        onSelect={onDelete}
+      </MenuItem>
+      <MenuItem
+        className={menuItemClassName}
+        variant="destructive"
+        onClick={onDelete}
       >
         <Trash2 className="size-4" />
         Delete file
-      </DropdownMenu.Item>
+      </MenuItem>
       <DisabledItem>
         <Plus className="size-4" />
         New drawing
       </DisabledItem>
-    </DropdownMenu.Group>
+    </MenuGroup>
   );
 }
 

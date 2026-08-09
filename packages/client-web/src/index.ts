@@ -1,16 +1,23 @@
 import type {
   AppBootstrap,
   CreateFileRequest,
+  DocumentReferences,
   FileDocument,
   FileEntry,
+  FilePage,
   FluxClient,
+  MarketplaceIndex,
   MoveFileRequest,
   OpenVaultRequest,
   PatchFileRequest,
+  PluginCatalogEntry,
+  PluginInstallResult,
   PurgeResult,
   RecentVault,
+  RuntimePluginBundle,
   SaveFileRequest,
   SaveResult,
+  SearchResult,
   ServerStatus,
   TrashEntry,
   TrashRetentionDays,
@@ -18,6 +25,7 @@ import type {
   VaultGraph,
   VaultChange,
   VaultLocation,
+  VaultFacets,
   WorkspaceSession,
 } from "@flux/bridge-contract";
 
@@ -101,11 +109,187 @@ export class WebFluxClient implements FluxClient {
     });
   }
 
+  getVaultConfig(vaultId: string) {
+    return this.request<Record<string, unknown>>(
+      `/vaults/${encodeURIComponent(vaultId)}/config`
+    );
+  }
+
+  putVaultConfig(vaultId: string, value: Record<string, unknown>) {
+    return this.request<void>(`/vaults/${encodeURIComponent(vaultId)}/config`, {
+      method: "PUT",
+      body: JSON.stringify(value),
+    });
+  }
+
+  listMCPConnections() {
+    return this.request<import("@flux/bridge-contract").MCPConnection[]>("/mcp-connections");
+  }
+
+  createMCPConnection(request: {
+    name: string;
+    mode: import("@flux/bridge-contract").MCPConnection["mode"];
+    vaultIds: string[];
+  }) {
+    return this.request<import("@flux/bridge-contract").MCPConnectionCredential>(
+      "/mcp-connections",
+      { method: "POST", body: JSON.stringify(request) }
+    );
+  }
+
+  revokeMCPConnection(connectionId: string) {
+    return this.request<void>(`/mcp-connections/${encodeURIComponent(connectionId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  listModelProviders() {
+    return this.request<import("@flux/bridge-contract").ModelProvider[]>("/model-providers");
+  }
+
+  getModelProvider(providerId: string) {
+    return this.request<import("@flux/bridge-contract").ModelProvider>(
+      `/model-providers/${encodeURIComponent(providerId)}`
+    );
+  }
+
+  updateModelProvider(providerId: string, config: Record<string, unknown>) {
+    return this.request<void>(`/model-providers/${encodeURIComponent(providerId)}`, {
+      method: "PUT",
+      body: JSON.stringify(config),
+    });
+  }
+
+  listAIRuntimes() {
+    return this.request<import("@flux/bridge-contract").AIRuntime[]>("/ai-runtimes");
+  }
+
+  getAIRuntime(runtimeId: string) {
+    return this.request<import("@flux/bridge-contract").AIRuntime>(
+      `/ai-runtimes/${encodeURIComponent(runtimeId)}`
+    );
+  }
+
+  listPlugins() {
+    return this.request<PluginCatalogEntry[]>("/plugins");
+  }
+
+  getMarketplace() {
+    return this.request<MarketplaceIndex>("/marketplace");
+  }
+
+  installMarketplacePlugin(pluginId: string) {
+    return this.request<PluginInstallResult>(
+      `/plugins/marketplace/${encodeURIComponent(pluginId)}/install`,
+      { method: "POST" }
+    );
+  }
+
+  installPlugin(packageData: Uint8Array, sha256: string) {
+    let binary = "";
+    for (let offset = 0; offset < packageData.length; offset += 0x8000) {
+      binary += String.fromCharCode(...packageData.subarray(offset, offset + 0x8000));
+    }
+    return this.request<PluginInstallResult>("/plugins/install", {
+      method: "POST",
+      body: JSON.stringify({ packageBase64: btoa(binary), sha256 }),
+    });
+  }
+
+  activatePlugin(pluginId: string, version: string) {
+    return this.request<void>(
+      `/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/activate`,
+      { method: "POST" }
+    );
+  }
+
+  approvePluginUpdate(
+    vaultId: string,
+    pluginId: string,
+    version: string,
+    grantedPermissions: string[]
+  ) {
+    return this.request<void>(
+      `/vaults/${encodeURIComponent(vaultId)}/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/approve`,
+      { method: "POST", body: JSON.stringify({ grantedPermissions }) }
+    );
+  }
+
+  rollbackPlugin(pluginId: string) {
+    return this.request<void>(`/plugins/${encodeURIComponent(pluginId)}/rollback`, {
+      method: "POST",
+    });
+  }
+
+  uninstallPlugin(pluginId: string, version: string) {
+    return this.request<void>(
+      `/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}`,
+      { method: "DELETE" }
+    );
+  }
+
+  listVaultPlugins(vaultId: string) {
+    return this.request<import("@flux/bridge-contract").VaultPlugin[]>(
+      `/vaults/${encodeURIComponent(vaultId)}/plugins`
+    );
+  }
+
+  enableVaultPlugin(vaultId: string, pluginId: string, grantedPermissions: string[]) {
+    return this.request<void>(
+      `/vaults/${encodeURIComponent(vaultId)}/plugins/${encodeURIComponent(pluginId)}`,
+      { method: "PUT", body: JSON.stringify({ grantedPermissions }) }
+    );
+  }
+
+  disableVaultPlugin(vaultId: string, pluginId: string) {
+    return this.request<void>(
+      `/vaults/${encodeURIComponent(vaultId)}/plugins/${encodeURIComponent(pluginId)}`,
+      { method: "DELETE" }
+    );
+  }
+
+  listPluginBundles(vaultId: string) {
+    return this.request<RuntimePluginBundle[]>(
+      `/vaults/${encodeURIComponent(vaultId)}/plugin-bundles`
+    );
+  }
+
+  invokePluginCapability(vaultId: string, pluginId: string, capability: string, input: unknown) {
+    return this.request<unknown>(
+      `/vaults/${encodeURIComponent(vaultId)}/plugins/${encodeURIComponent(pluginId)}/capabilities/${encodeURIComponent(capability)}`,
+      { method: "POST", body: JSON.stringify({ input }) }
+    );
+  }
+
+  getPluginView(vaultId: string, pluginId: string, viewId: string) {
+    return this.request<{ id: string; title: string; html: string }>(
+      `/vaults/${encodeURIComponent(vaultId)}/plugins/${encodeURIComponent(pluginId)}/views/${encodeURIComponent(viewId)}`
+    );
+  }
+
+  async getPluginSettings(vaultId: string, pluginId: string) {
+    const result = await this.request<{ values: Record<string, unknown> }>(
+      `/vaults/${encodeURIComponent(vaultId)}/plugins/${encodeURIComponent(pluginId)}/settings`
+    );
+    return result.values;
+  }
+
+  putPluginSettings(vaultId: string, pluginId: string, values: Record<string, unknown>) {
+    return this.request<void>(
+      `/vaults/${encodeURIComponent(vaultId)}/plugins/${encodeURIComponent(pluginId)}/settings`,
+      { method: "PUT", body: JSON.stringify({ values }) }
+    );
+  }
+
   openVault(request: OpenVaultRequest = {}) {
     return this.request<VaultInfo>("/vaults/open", {
       method: "POST",
       body: JSON.stringify(request),
     });
+  }
+
+  getVaultInfo(vaultId: string) {
+    return this.request<VaultInfo>(`/vaults/${encodeURIComponent(vaultId)}`);
   }
 
   createVault(request: Required<OpenVaultRequest>) {
@@ -152,8 +336,40 @@ export class WebFluxClient implements FluxClient {
     return this.request<FileEntry[]>(`/vaults/${encodeURIComponent(vaultId)}/files`);
   }
 
+  listFileChildren(vaultId: string, parent: string, cursor?: string) {
+    const query = new URLSearchParams({ parent, limit: "250" });
+    if (cursor) query.set("cursor", cursor);
+    return this.request<FilePage>(
+      `/vaults/${encodeURIComponent(vaultId)}/files/children?${query.toString()}`
+    );
+  }
+
   getGraph(vaultId: string) {
     return this.request<VaultGraph>(`/vaults/${encodeURIComponent(vaultId)}/graph`);
+  }
+
+  searchVault(vaultId: string, query: string, limit = 100, offset = 0, matchCase = false) {
+    const params = new URLSearchParams({
+      q: query,
+      limit: String(limit),
+      offset: String(offset),
+      matchCase: String(matchCase),
+    });
+    return this.request<SearchResult[]>(
+      `/vaults/${encodeURIComponent(vaultId)}/search?${params.toString()}`
+    );
+  }
+
+  getDocumentReferences(vaultId: string, path: string, includeUnlinked = false) {
+    const params = new URLSearchParams({ path });
+    if (includeUnlinked) params.set("includeUnlinked", "true");
+    return this.request<DocumentReferences>(
+      `/vaults/${encodeURIComponent(vaultId)}/references?${params.toString()}`
+    );
+  }
+
+  getVaultFacets(vaultId: string) {
+    return this.request<VaultFacets>(`/vaults/${encodeURIComponent(vaultId)}/facets`);
   }
 
   async getFileMetadata(vaultId: string, path: string) {

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/flux-pkm/server/internal/domain"
 	"gorm.io/driver/sqlite"
@@ -47,6 +48,22 @@ type LinkRecord struct {
 
 func (LinkRecord) TableName() string { return "links" }
 
+type TagRecord struct {
+	ID         uint   `gorm:"primaryKey"`
+	SourcePath string `gorm:"uniqueIndex:idx_tag_source;index;not null"`
+	Tag        string `gorm:"uniqueIndex:idx_tag_source;index;not null"`
+}
+
+func (TagRecord) TableName() string { return "tags" }
+
+type PropertyRecord struct {
+	ID         uint   `gorm:"primaryKey"`
+	SourcePath string `gorm:"uniqueIndex:idx_property_source;index;not null"`
+	Key        string `gorm:"uniqueIndex:idx_property_source;index;not null"`
+}
+
+func (PropertyRecord) TableName() string { return "properties" }
+
 type Store struct {
 	db         *gorm.DB
 	writer     sync.Mutex
@@ -69,6 +86,8 @@ type PreparedFile struct {
 	searchText   string
 	writableText bool
 	indexedAt    time.Time
+	tags         []string
+	properties   []string
 }
 
 func (fingerprint Fingerprint) Current(entry domain.FileEntry) bool {
@@ -104,9 +123,18 @@ func Open(databasePath string) (*Store, error) {
 			return nil, err
 		}
 	}
-	if err := db.AutoMigrate(&FileRecord{}, &LinkRecord{}); err != nil {
+	hadFacetIndex := db.Migrator().HasTable(&TagRecord{}) && db.Migrator().HasTable(&PropertyRecord{})
+	if err := db.AutoMigrate(&FileRecord{}, &LinkRecord{}, &TagRecord{}, &PropertyRecord{}); err != nil {
 		_ = store.Close()
 		return nil, err
+	}
+	if !hadFacetIndex {
+		if err := db.Model(&FileRecord{}).
+			Where("kind = ?", string(domain.FileKindMarkdown)).
+			Updates(map[string]any{"indexed_hash": "", "graph_indexed": false}).Error; err != nil {
+			_ = store.Close()
+			return nil, err
+		}
 	}
 	var fts5 int
 	if db.Raw("SELECT sqlite_compileoption_used('ENABLE_FTS5')").Scan(&fts5).Error == nil && fts5 == 1 {
@@ -150,6 +178,145 @@ func (s *Store) ListFiles() ([]domain.FileEntry, error) {
 		})
 	}
 	return entries, nil
+}
+
+func (s *Store) LinkSourcePathsForMove(sourcePath string) ([]string, error) {
+	graph, err := s.Graph()
+	if err != nil {
+		return nil, err
+	}
+	affected := make(map[string]struct{})
+	moved := func(candidate string) bool {
+		return candidate == sourcePath || strings.HasPrefix(candidate, sourcePath+"/")
+	}
+	for _, edge := range graph.Edges {
+		if moved(edge.Source) || moved(edge.Target) {
+			affected[edge.Source] = struct{}{}
+		}
+	}
+	paths := make([]string, 0, len(affected))
+	for candidate := range affected {
+		paths = append(paths, candidate)
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+func (s *Store) ListChildren(parent, cursor string, limit int) ([]domain.FileEntry, string, error) {
+	if limit < 1 || limit > 500 {
+		limit = 250
+	}
+	query := s.db.Model(&FileRecord{})
+	if parent == "" {
+		query = query.Where("instr(relative_path, '/') = 0")
+	} else {
+		prefix := strings.TrimSuffix(parent, "/") + "/"
+		query = query.Where(
+			"substr(relative_path, 1, ?) = ? AND instr(substr(relative_path, ?), '/') = 0",
+			len(prefix), prefix, len(prefix)+1,
+		)
+	}
+	if cursor != "" {
+		query = query.Where("relative_path > ?", cursor)
+	}
+	var records []FileRecord
+	if err := query.Order("relative_path").Limit(limit + 1).Find(&records).Error; err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(records) > limit {
+		records = records[:limit]
+		next = records[len(records)-1].RelativePath
+	}
+	entries := make([]domain.FileEntry, 0, len(records))
+	for _, record := range records {
+		entries = append(entries, domain.FileEntry{
+			Path: record.RelativePath, Name: record.DisplayName, Kind: domain.FileKind(record.Kind),
+			SizeBytes: record.SizeBytes, ModifiedAt: record.ModifiedAt,
+		})
+	}
+	return entries, next, nil
+}
+
+func (s *Store) Search(text string, limit int) ([]domain.SearchResult, error) {
+	return s.SearchPage(text, limit, 0)
+}
+
+func (s *Store) SearchPage(text string, limit, offset int) ([]domain.SearchResult, error) {
+	return s.SearchPageCase(text, limit, offset, false)
+}
+
+func (s *Store) SearchPageCase(text string, limit, offset int, caseSensitive bool) ([]domain.SearchResult, error) {
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if !s.ftsEnabled {
+		return []domain.SearchResult{}, nil
+	}
+	var contentTerms []string
+	var caseTerms []string
+	var pathFilter, tagFilter, propertyFilter string
+	for _, token := range strings.Fields(text) {
+		name, value, hasOperator := strings.Cut(token, ":")
+		value = strings.Trim(value, `"'`)
+		if hasOperator && value != "" {
+			switch strings.ToLower(name) {
+			case "path", "file":
+				pathFilter = value
+				continue
+			case "tag":
+				tagFilter = strings.TrimPrefix(value, "#")
+				continue
+			case "property":
+				propertyFilter = value
+				continue
+			}
+		}
+		contentTerms = append(contentTerms, searchTerms(token)...)
+		caseTerms = append(caseTerms, strings.Trim(token, `"'`))
+	}
+	if len(contentTerms) == 0 && pathFilter == "" && tagFilter == "" && propertyFilter == "" {
+		return []domain.SearchResult{}, nil
+	}
+	args := make([]any, 0, 5)
+	query := "SELECT relative_path, '' AS excerpt FROM files WHERE kind IN ('markdown', 'text')"
+	if len(contentTerms) > 0 {
+		query = "SELECT relative_path, snippet(files_fts, 1, '', '', ' … ', 24) AS excerpt FROM files_fts WHERE files_fts MATCH ?"
+		args = append(args, strings.Join(contentTerms, " AND "))
+		if caseSensitive {
+			for _, term := range caseTerms {
+				query += " AND instr(content, ?) > 0"
+				args = append(args, term)
+			}
+		}
+	}
+	if pathFilter != "" {
+		query += " AND lower(relative_path) LIKE lower(?)"
+		args = append(args, "%"+pathFilter+"%")
+	}
+	if tagFilter != "" {
+		query += " AND relative_path IN (SELECT source_path FROM tags WHERE lower(tag) = lower(?))"
+		args = append(args, tagFilter)
+	}
+	if propertyFilter != "" {
+		query += " AND relative_path IN (SELECT source_path FROM properties WHERE lower(key) = lower(?))"
+		args = append(args, propertyFilter)
+	}
+	query += " ORDER BY relative_path LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+	var rows []struct {
+		RelativePath string
+		Excerpt      string
+	}
+	err := s.db.Raw(query, args...).Scan(&rows).Error
+	results := make([]domain.SearchResult, 0, len(rows))
+	for _, row := range rows {
+		results = append(results, domain.SearchResult{Path: row.RelativePath, Title: path.Base(row.RelativePath), Excerpt: row.Excerpt})
+	}
+	return results, err
 }
 
 func (s *Store) IsCurrent(entry domain.FileEntry) (bool, error) {
@@ -203,10 +370,14 @@ func PrepareFile(entry domain.FileEntry, reader io.Reader) (PreparedFile, error)
 			return PreparedFile{}, err
 		}
 	}
-	return PreparedFile{
+	prepared := PreparedFile{
 		entry: entry, contentHash: hex.EncodeToString(hasher.Sum(nil)), searchText: text.String(),
 		writableText: writableText, indexedAt: time.Now().UTC(),
-	}, nil
+	}
+	if entry.Kind == domain.FileKindMarkdown && writableText {
+		prepared.tags, prepared.properties = extractFacets(prepared.searchText)
+	}
+	return prepared, nil
 }
 
 func (s *Store) IndexPrepared(files []PreparedFile) error {
@@ -224,6 +395,8 @@ func (s *Store) IndexPrepared(files []PreparedFile) error {
 		}
 		searchRows := make([]searchRow, 0, len(files))
 		links := make([]LinkRecord, 0)
+		tags := make([]TagRecord, 0)
+		properties := make([]PropertyRecord, 0)
 		for _, file := range files {
 			indexedAt := file.indexedAt
 			records = append(records, FileRecord{
@@ -240,6 +413,12 @@ func (s *Store) IndexPrepared(files []PreparedFile) error {
 				for _, link := range extractLinks(file.searchText) {
 					links = append(links, LinkRecord{SourcePath: file.entry.Path, RawTarget: link.target, Position: link.position})
 				}
+				for _, tag := range file.tags {
+					tags = append(tags, TagRecord{SourcePath: file.entry.Path, Tag: tag})
+				}
+				for _, key := range file.properties {
+					properties = append(properties, PropertyRecord{SourcePath: file.entry.Path, Key: key})
+				}
 			}
 		}
 		if err := tx.Clauses(clause.OnConflict{
@@ -253,8 +432,24 @@ func (s *Store) IndexPrepared(files []PreparedFile) error {
 		if err := tx.Where("source_path IN ?", paths).Delete(&LinkRecord{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("source_path IN ?", paths).Delete(&TagRecord{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("source_path IN ?", paths).Delete(&PropertyRecord{}).Error; err != nil {
+			return err
+		}
 		if len(links) > 0 {
 			if err := tx.CreateInBatches(links, 200).Error; err != nil {
+				return err
+			}
+		}
+		if len(tags) > 0 {
+			if err := tx.CreateInBatches(tags, 200).Error; err != nil {
+				return err
+			}
+		}
+		if len(properties) > 0 {
+			if err := tx.CreateInBatches(properties, 200).Error; err != nil {
 				return err
 			}
 		}
@@ -290,6 +485,14 @@ func (s *Store) DeletePath(relativePath string) error {
 			Delete(&LinkRecord{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("source_path = ? OR substr(source_path, 1, ?) = ?", relativePath, len(prefix), prefix).
+			Delete(&TagRecord{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("source_path = ? OR substr(source_path, 1, ?) = ?", relativePath, len(prefix), prefix).
+			Delete(&PropertyRecord{}).Error; err != nil {
+			return err
+		}
 		return s.deleteFTS(tx, paths)
 	})
 }
@@ -312,6 +515,12 @@ func (s *Store) deleteMissing(tx *gorm.DB, paths []string) error {
 			return err
 		}
 		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&LinkRecord{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&TagRecord{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&PropertyRecord{}).Error; err != nil {
 			return err
 		}
 		return s.clearFTS(tx)
@@ -341,6 +550,12 @@ func (s *Store) deleteMissing(tx *gorm.DB, paths []string) error {
 	if err := tx.Exec("DELETE FROM links WHERE NOT EXISTS (SELECT 1 FROM flux_live_paths WHERE path = links.source_path)").Error; err != nil {
 		return err
 	}
+	if err := tx.Exec("DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM flux_live_paths WHERE path = tags.source_path)").Error; err != nil {
+		return err
+	}
+	if err := tx.Exec("DELETE FROM properties WHERE NOT EXISTS (SELECT 1 FROM flux_live_paths WHERE path = properties.source_path)").Error; err != nil {
+		return err
+	}
 	return s.deleteFTS(tx, stale)
 }
 
@@ -358,6 +573,12 @@ func (s *Store) Reset() error {
 			return err
 		}
 		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&LinkRecord{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&TagRecord{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&PropertyRecord{}).Error; err != nil {
 			return err
 		}
 		return s.clearFTS(tx)
@@ -417,11 +638,71 @@ var (
 	wikiLinkPattern     = regexp.MustCompile(`!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]`)
 	markdownLinkPattern = regexp.MustCompile(`!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)`)
 	externalLinkPattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
+	inlineTagPattern    = regexp.MustCompile(`(?:^|\s)#([\p{L}\p{N}_/-]+)`)
+	propertyPattern     = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$`)
 )
 
 type parsedLink struct {
 	target   string
 	position int
+}
+
+func extractFacets(content string) ([]string, []string) {
+	tagSet := make(map[string]struct{})
+	propertySet := make(map[string]struct{})
+	masked := maskMarkdownCode(content)
+	body := masked
+	if strings.HasPrefix(masked, "---\n") {
+		if end := strings.Index(masked[4:], "\n---"); end >= 0 {
+			frontmatter := content[4 : 4+end]
+			body = masked[4+end+4:]
+			activeKey := ""
+			for _, line := range strings.Split(frontmatter, "\n") {
+				if match := propertyPattern.FindStringSubmatch(line); match != nil {
+					activeKey = strings.ToLower(match[1])
+					propertySet[activeKey] = struct{}{}
+					if activeKey == "tags" {
+						addTagValues(tagSet, match[2])
+					}
+					continue
+				}
+				if activeKey == "tags" {
+					trimmed := strings.TrimSpace(line)
+					if strings.HasPrefix(trimmed, "- ") {
+						addTagValues(tagSet, strings.TrimPrefix(trimmed, "- "))
+					}
+				}
+			}
+		}
+	}
+	for _, match := range inlineTagPattern.FindAllStringSubmatch(body, -1) {
+		if tag := strings.Trim(match[1], "/"); tag != "" {
+			tagSet[tag] = struct{}{}
+		}
+	}
+	tags := make([]string, 0, len(tagSet))
+	for tag := range tagSet {
+		tags = append(tags, tag)
+	}
+	properties := make([]string, 0, len(propertySet))
+	for key := range propertySet {
+		properties = append(properties, key)
+	}
+	sort.Strings(tags)
+	sort.Strings(properties)
+	return tags, properties
+}
+
+func addTagValues(tags map[string]struct{}, value string) {
+	value = strings.TrimSpace(strings.Trim(value, "[]"))
+	for _, item := range strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	}) {
+		item = strings.Trim(strings.TrimSpace(item), `"'#/`)
+		if item != "" {
+			tags[item] = struct{}{}
+		}
+	}
 }
 
 func extractLinks(content string) []parsedLink {

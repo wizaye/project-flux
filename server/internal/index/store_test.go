@@ -68,6 +68,79 @@ func TestExtractLinksIgnoresMarkdownCodeExamples(t *testing.T) {
 	}
 }
 
+func TestIndexStoresTagAndPropertyFacets(t *testing.T) {
+	store, err := Open(t.TempDir() + "/index.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Now().UTC()
+	inputs := map[string]string{
+		"one.md": "---\ntags: [project/flux, active]\nstatus: draft\n---\n#inline",
+		"two.md": "---\ntags:\n  - active\nowner: flux\n---\n#project/flux",
+	}
+	for filePath, content := range inputs {
+		entry := domain.FileEntry{
+			Path: filePath, Name: filePath, Kind: domain.FileKindMarkdown,
+			SizeBytes: int64(len(content)), ModifiedAt: now,
+		}
+		if err := store.IndexFile(entry, strings.NewReader(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	facets, err := store.Facets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tagCounts := map[string]int{}
+	for _, facet := range facets.Tags {
+		tagCounts[facet.Name] = facet.Count
+	}
+	if tagCounts["active"] != 2 || tagCounts["project/flux"] != 2 || tagCounts["inline"] != 1 {
+		t.Fatalf("unexpected tag facets: %#v", facets.Tags)
+	}
+	propertyCounts := map[string]int{}
+	for _, facet := range facets.Properties {
+		propertyCounts[facet.Name] = facet.Count
+	}
+	if propertyCounts["tags"] != 2 || propertyCounts["status"] != 1 || propertyCounts["owner"] != 1 {
+		t.Fatalf("unexpected property facets: %#v", facets.Properties)
+	}
+}
+
+func TestMissingFacetTablesInvalidateMarkdownForBackfill(t *testing.T) {
+	databasePath := t.TempDir() + "/index.db"
+	store, err := Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := domain.FileEntry{
+		Path: "note.md", Name: "note.md", Kind: domain.FileKindMarkdown,
+		SizeBytes: 4, ModifiedAt: time.Now().UTC(),
+	}
+	if err := store.IndexFile(entry, strings.NewReader("note")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Migrator().DropTable(&TagRecord{}, &PropertyRecord{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	current, err := reopened.IsCurrent(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current {
+		t.Fatal("markdown remained current after facet tables were added")
+	}
+}
+
 func TestDeletePathRemovesDirectoryDescendants(t *testing.T) {
 	store, err := Open(t.TempDir() + "/index.db")
 	if err != nil {
@@ -172,5 +245,12 @@ func TestGraphUsesPathsAndNeverCollapsesDuplicateNames(t *testing.T) {
 	}
 	if !missing {
 		t.Fatalf("missing graph node was not represented: %#v", graph.Nodes)
+	}
+	sources, err := store.LinkSourcePathsForMove("notes/target.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 1 || sources[0] != "notes/start.md" {
+		t.Fatalf("move rewrite scanned unrelated sources: %#v", sources)
 	}
 }

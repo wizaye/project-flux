@@ -14,6 +14,7 @@ import { keymap } from "@codemirror/view";
 interface LinkableDocument {
   title: string;
   path?: string;
+  content?: string;
 }
 
 const commands = [

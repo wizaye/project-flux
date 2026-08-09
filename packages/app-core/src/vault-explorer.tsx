@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FileEntry } from "@flux/bridge-contract";
 import {
   Archive,
@@ -10,8 +10,26 @@ import {
   ListFilter,
   Trash2,
 } from "lucide-react";
-import { ContextMenu, HoverCard } from "radix-ui";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@flux/shared-ui/components/tooltip";
+import { AnimatePresence } from "motion/react";
+import * as m from "motion/react-m";
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuPopup,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@flux/shared-ui/components/ui/context-menu";
+import {
+  Dialog,
+  DialogDescription,
+  DialogPopup,
+  DialogTitle,
+} from "@flux/shared-ui/components/ui/dialog";
+import {
+  PreviewCard,
+  PreviewCardPopup,
+  PreviewCardTrigger,
+} from "@flux/shared-ui/components/ui/preview-card";
 import ReadingView from "./reading-view";
 import { splitFrontmatter } from "./frontmatter";
 import type { DemoDocument } from "./markdown-editor";
@@ -19,6 +37,9 @@ import type { DemoDocument } from "./markdown-editor";
 interface VaultExplorerProps {
   entries: FileEntry[];
   activePath?: string;
+  revealPath?: string;
+  selectedPath?: string;
+  onClearRevealPath?: () => void;
   onOpen: (path: string) => void;
   onCreateNote: (parent: string, name: string) => void;
   onCreateFolder: (parent: string, name: string) => void;
@@ -31,12 +52,9 @@ interface VaultExplorerProps {
   documents: DemoDocument[];
   expandedFolders?: string[];
   onExpandedFoldersChange?: (paths: string[]) => void;
+  onExpandFolder?: (path: string) => void;
+  onSelectPath?: (path: string) => void;
 }
-
-const menuClass =
-  "z-[150] min-w-44 rounded-lg border bg-popover p-1 text-popover-foreground shadow-xl [border-color:var(--layout-separator)]";
-const itemClass =
-  "flex h-8 cursor-default select-none items-center rounded-md px-2 text-sm outline-none data-[highlighted]:bg-accent";
 
 function filePresentation(entry: FileEntry) {
   if (entry.kind === "directory") return { label: entry.name, badge: "" };
@@ -77,9 +95,35 @@ export function VaultExplorer({
   onOpenTrash,
   onPreview,
   documents,
+  revealPath,
+  onClearRevealPath,
   expandedFolders,
   onExpandedFoldersChange,
+  onExpandFolder,
+  onSelectPath,
+  selectedPath,
 }: VaultExplorerProps) {
+  const activeRef = useRef<HTMLButtonElement>(null);
+  const revealRef = useRef<HTMLButtonElement>(null);
+  const prevActiveRef = useRef(activePath);
+  const prevRevealRef = useRef(revealPath);
+
+  useEffect(() => {
+    const activeChanged = activePath !== prevActiveRef.current;
+    const revealChanged = revealPath !== prevRevealRef.current;
+    prevActiveRef.current = activePath;
+    prevRevealRef.current = revealPath;
+
+    const targetRef =
+      revealChanged && revealPath
+        ? revealRef.current ?? activeRef.current
+        : activeChanged && activePath
+          ? activeRef.current
+          : null;
+
+    targetRef?.scrollIntoView({ behavior: "auto", block: "nearest" });
+  }, [activePath, revealPath]);
+
   const [selectedFolder, setSelectedFolder] = useState<string>();
   const [localExpandedPaths, setLocalExpandedPaths] = useState<Set<string>>(new Set());
   const expandedPaths = useMemo(
@@ -100,18 +144,7 @@ export function VaultExplorer({
     loading: boolean;
   }>();
   const previewRequestRef = useRef(0);
-  const pointerDragRef = useRef<
-    | {
-        source: string;
-        startX: number;
-        startY: number;
-        pointerId: number;
-        dragging: boolean;
-        target?: string;
-      }
-    | undefined
-  >(undefined);
-  const suppressClickRef = useRef(false);
+  const dragSourceRef = useRef<string | undefined>(undefined);
   const cancelInlineEditRef = useRef(false);
   const [inlineEdit, setInlineEdit] = useState<
     | { kind: "note" | "folder"; parent: string; value: string }
@@ -261,83 +294,78 @@ export function VaultExplorer({
     }
     const directory = entry.kind === "directory";
     const expanded = expandedPaths.has(entry.path);
+    const isRevealTarget = revealPath === entry.path;
     const presentation = filePresentation(entry);
     const metadata = entryMetadata(entry);
     const row = (
       <button
+        ref={entry.path === activePath ? activeRef : entry.path === revealPath ? revealRef : undefined}
         type="button"
         role="treeitem"
         data-flux-drop-folder={directory ? entry.path : undefined}
         aria-expanded={directory ? expanded : undefined}
         aria-selected={entry.path === activePath}
         aria-label={`${presentation.label}, ${metadata}`}
+        draggable
         onClick={() => {
-          if (suppressClickRef.current) {
-            suppressClickRef.current = false;
-            return;
-          }
+          onClearRevealPath?.();
           if (!directory) {
             const separator = entry.path.lastIndexOf("/");
             setSelectedFolder(separator < 0 ? "" : entry.path.slice(0, separator));
+            onSelectPath?.(entry.path);
             onOpen(entry.path);
             return;
           }
           setSelectedFolder(entry.path);
+          onSelectPath?.(entry.path);
           updateExpandedPaths((current) => {
             const next = new Set(current);
             if (next.has(entry.path)) next.delete(entry.path);
-            else next.add(entry.path);
+            else {
+              next.add(entry.path);
+              onExpandFolder?.(entry.path);
+            }
             return next;
           });
         }}
-        onPointerDown={(event) => {
-          if (event.button !== 0) return;
-          pointerDragRef.current = {
-            source: entry.path,
-            startX: event.clientX,
-            startY: event.clientY,
-            pointerId: event.pointerId,
-            dragging: false,
-          };
-          event.currentTarget.setPointerCapture(event.pointerId);
+        onDragStart={(event) => {
+          dragSourceRef.current = entry.path;
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("application/x-flux-path", entry.path);
+          event.dataTransfer.setData("text/plain", entry.path);
         }}
         onPointerEnter={(event) => {
           if (event.metaKey || event.ctrlKey) void showPreview(entry);
         }}
         onPointerMove={(event) => {
-          const drag = pointerDragRef.current;
-          if (drag?.pointerId === event.pointerId) {
-            const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
-            if (distance >= 5) drag.dragging = true;
-            if (drag.dragging) {
-              event.preventDefault();
-              const target = document
-                .elementFromPoint(event.clientX, event.clientY)
-                ?.closest<HTMLElement>("[data-flux-drop-folder]")?.dataset.fluxDropFolder;
-              drag.target =
-                target !== undefined && canMoveTo(drag.source, target) ? target : undefined;
-              setDropTarget(drag.target);
-            }
-          }
           if ((event.metaKey || event.ctrlKey) && preview?.path !== entry.path)
             void showPreview(entry);
         }}
-        onPointerUp={(event) => {
-          const drag = pointerDragRef.current;
-          if (drag?.pointerId !== event.pointerId) return;
-          event.currentTarget.releasePointerCapture(event.pointerId);
-          pointerDragRef.current = undefined;
-          setDropTarget(undefined);
-          if (!drag.dragging || drag.target === undefined) return;
+        onDragOver={(event) => {
+          if (!directory) return;
+          const source =
+            dragSourceRef.current ??
+            event.dataTransfer.getData("application/x-flux-path");
+          if (!source || !canMoveTo(source, entry.path)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          setDropTarget(entry.path);
+        }}
+        onDrop={(event) => {
+          if (!directory) return;
+          const source =
+            dragSourceRef.current ??
+            event.dataTransfer.getData("application/x-flux-path");
+          if (!source || !canMoveTo(source, entry.path)) return;
           event.preventDefault();
           event.stopPropagation();
-          suppressClickRef.current = true;
-          const name = drag.source.slice(drag.source.lastIndexOf("/") + 1);
-          onMove(drag.source, drag.target ? `${drag.target}/${name}` : name);
-          setSelectedFolder(drag.target);
+          setDropTarget(undefined);
+          const name = source.slice(source.lastIndexOf("/") + 1);
+          onMove(source, `${entry.path}/${name}`);
+          setSelectedFolder(entry.path);
         }}
-        onPointerCancel={() => {
-          pointerDragRef.current = undefined;
+        onDragEnd={() => {
+          dragSourceRef.current = undefined;
           setDropTarget(undefined);
         }}
         onPointerLeave={() => hidePreview(entry.path)}
@@ -345,13 +373,19 @@ export function VaultExplorer({
           dropTarget === entry.path
             ? "bg-primary/10 text-foreground ring-1 ring-inset ring-primary/50"
             : entry.path === activePath
-              ? "bg-accent text-accent-foreground"
-              : "text-muted-foreground"
+              ? "bg-sidebar-selected text-sidebar-accent-foreground font-medium"
+              : isRevealTarget
+                ? "bg-primary/10 text-foreground ring-1 ring-inset ring-primary/50"
+                : entry.path === selectedPath
+                  ? "bg-accent/60 text-foreground ring-1 ring-inset ring-primary/50"
+                  : "text-muted-foreground"
         }`}
         style={{ paddingLeft: 8 + depth * 16 }}
       >
         {directory ? (
-          <ChevronRight className={`size-3.5 shrink-0 ${expanded ? "rotate-90" : ""}`} />
+          <ChevronRight
+            className={`size-3.5 shrink-0 transition-transform duration-150 ease-out motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`}
+          />
         ) : null}
         {directory ? (
           <FolderOpen className="size-3.5 shrink-0" />
@@ -369,31 +403,19 @@ export function VaultExplorer({
 
     return (
       <div key={entry.path}>
-        <ContextMenu.Root>
-          <HoverCard.Root
-            open={preview?.path === entry.path}
-            onOpenChange={(open) => !open && hidePreview(entry.path)}
-          >
-            <Tooltip open={preview?.path === entry.path ? false : undefined}>
-              <ContextMenu.Trigger asChild>
-                <TooltipTrigger asChild>
-                  <HoverCard.Trigger asChild>{row}</HoverCard.Trigger>
-                </TooltipTrigger>
-              </ContextMenu.Trigger>
-              <TooltipContent side="right" sideOffset={8} className="max-w-72 items-start">
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">{entry.path}</span>
-                  <span className="mt-0.5 block text-[10px] text-muted-foreground">{metadata}</span>
-                </span>
-              </TooltipContent>
-            </Tooltip>
-            <HoverCard.Portal>
-              <HoverCard.Content
+        <ContextMenu>
+          <ContextMenuTrigger render={<div className="contents" />}>
+            <PreviewCard
+              open={preview?.path === entry.path}
+              onOpenChange={(open) => !open && hidePreview(entry.path)}
+            >
+              <PreviewCardTrigger render={row} />
+              <PreviewCardPopup
                 side="right"
                 align="start"
                 sideOffset={10}
                 collisionPadding={12}
-                className="z-[160] w-[30rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-2xl [border-color:var(--layout-separator)]"
+                className="z-[160] w-[30rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md p-0"
               >
                 <div className="grid grid-cols-[3px_minmax(0,1fr)] border-b [border-color:var(--layout-separator)]">
                   <span className="bg-primary/70" aria-hidden="true" />
@@ -424,68 +446,80 @@ export function VaultExplorer({
                     <p className="p-4 text-xs text-muted-foreground">Empty file</p>
                   )}
                 </div>
-              </HoverCard.Content>
-            </HoverCard.Portal>
-          </HoverCard.Root>
-          <ContextMenu.Portal>
-            <ContextMenu.Content className={menuClass}>
+              </PreviewCardPopup>
+            </PreviewCard>
+          </ContextMenuTrigger>
+            <ContextMenuPopup className="z-[150] min-w-44">
               {directory ? (
                 <>
-                  <ContextMenu.Item
-                    className={itemClass}
-                    onSelect={() => beginCreate("note", entry.path)}
+                  <ContextMenuItem
+                    onClick={() => beginCreate("note", entry.path)}
                   >
                     New note
-                  </ContextMenu.Item>
-                  <ContextMenu.Item
-                    className={itemClass}
-                    onSelect={() => beginCreate("folder", entry.path)}
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => beginCreate("folder", entry.path)}
                   >
                     New folder
-                  </ContextMenu.Item>
-                  <ContextMenu.Separator className="my-1 h-px bg-[var(--layout-separator)]" />
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
                 </>
               ) : null}
-              <ContextMenu.Item
-                className={itemClass}
-                onSelect={() => setDialog({ kind: "move", entry, value: "" })}
+              <ContextMenuItem
+                onClick={() => setDialog({ kind: "move", entry, value: "" })}
               >
                 Move {directory ? "folder" : "file"} to…
-              </ContextMenu.Item>
-              <ContextMenu.Item
-                className={itemClass}
-                onSelect={() => {
+              </ContextMenuItem>
+              <ContextMenuItem
+                onClick={() => {
                   cancelInlineEditRef.current = false;
                   setInlineEdit({ kind: "rename", entry, value: entry.name });
                 }}
               >
                 Rename…
-              </ContextMenu.Item>
-              <ContextMenu.Separator className="my-1 h-px bg-[var(--layout-separator)]" />
+              </ContextMenuItem>
+              <ContextMenuSeparator />
               {entry.path !== "archive" && !entry.path.startsWith("archive/") ? (
-                <ContextMenu.Item className={itemClass} onSelect={() => onArchive(entry.path)}>
+                <ContextMenuItem onClick={() => onArchive(entry.path)}>
                   Move to archive
-                </ContextMenu.Item>
+                </ContextMenuItem>
               ) : null}
-              <ContextMenu.Item
-                className={`${itemClass} text-destructive`}
-                onSelect={() => onDelete(entry.path)}
+              <ContextMenuItem
+                variant="destructive"
+                onClick={() => onDelete(entry.path)}
               >
                 Move to trash
-              </ContextMenu.Item>
-            </ContextMenu.Content>
-          </ContextMenu.Portal>
-        </ContextMenu.Root>
-        {directory && expanded ? (
-          <div role="group" className="relative">
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-y-0 w-px bg-[color-mix(in_oklab,var(--muted-foreground)_16%,transparent)]"
-              style={{ left: 15 + depth * 16 }}
-            />
-            {renderInlineEdit(entry.path, depth + 1)}
-            {(children.get(entry.path) ?? []).map((child) => renderEntry(child, depth + 1))}
-          </div>
+              </ContextMenuItem>
+            </ContextMenuPopup>
+        </ContextMenu>
+        {directory ? (
+          <AnimatePresence initial={false}>
+            {expanded ? (
+              <m.div
+                key={`${entry.path}:children`}
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{
+                  height: { duration: 0.16, ease: [0.22, 1, 0.36, 1] },
+                  opacity: { duration: 0.1, ease: "easeOut" },
+                  layout: { duration: 0.16, ease: [0.22, 1, 0.36, 1] },
+                }}
+                layout="size"
+                className="overflow-hidden"
+              >
+                <div role="group" className="relative">
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-y-0 w-px bg-[color-mix(in_oklab,var(--muted-foreground)_16%,transparent)]"
+                    style={{ left: 15 + depth * 16 }}
+                  />
+                  {renderInlineEdit(entry.path, depth + 1)}
+                  {(children.get(entry.path) ?? []).map((child) => renderEntry(child, depth + 1))}
+                </div>
+              </m.div>
+            ) : null}
+          </AnimatePresence>
         ) : null}
       </div>
     );
@@ -554,19 +588,45 @@ export function VaultExplorer({
         className={`flux-editor-scroll flux-sidebar-scroll min-h-0 min-w-0 flex-1 overflow-x-clip overflow-y-auto p-1.5 ${dropTarget === "" ? "bg-primary/5 ring-1 ring-inset ring-primary/40" : ""}`}
         role="tree"
         aria-label="Files"
+        onDragOver={(event) => {
+          const source =
+            dragSourceRef.current ??
+            event.dataTransfer.getData("application/x-flux-path");
+          if (!source || !canMoveTo(source, "")) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          setDropTarget("");
+        }}
+        onDrop={(event) => {
+          const source =
+            dragSourceRef.current ??
+            event.dataTransfer.getData("application/x-flux-path");
+          if (!source || !canMoveTo(source, "")) return;
+          event.preventDefault();
+          const name = source.slice(source.lastIndexOf("/") + 1);
+          onMove(source, name);
+          setSelectedFolder("");
+          dragSourceRef.current = undefined;
+          setDropTarget(undefined);
+        }}
         onClick={(event) => {
-          if (event.currentTarget === event.target) setSelectedFolder("");
+          if (event.currentTarget === event.target) {
+            setSelectedFolder("");
+            onSelectPath?.("");
+            onClearRevealPath?.();
+          }
         }}
       >
         {renderInlineEdit("", 0)}
         {(children.get("") ?? []).map((entry) => renderEntry(entry, 0))}
       </div>
       {dialog ? (
-        <div className="fixed inset-0 z-[190] grid place-items-center bg-black/35 p-4">
-          <div className="w-full max-w-sm rounded-xl border bg-popover p-5 shadow-2xl [border-color:var(--layout-separator)]">
-            <label className="text-sm font-semibold" htmlFor="vault-operation-value">
-              Move to folder
-            </label>
+        <Dialog open onOpenChange={(open) => !open && setDialog(undefined)}>
+          <DialogPopup bottomStickOnMobile={false} showCloseButton={false} className="max-w-sm p-5">
+            <DialogTitle className="text-sm font-semibold">Move to folder</DialogTitle>
+            <DialogDescription className="sr-only">
+              Enter destination folder or leave blank for vault root.
+            </DialogDescription>
             <input
               id="vault-operation-value"
               autoFocus
@@ -594,8 +654,8 @@ export function VaultExplorer({
                 Move
               </button>
             </div>
-          </div>
-        </div>
+          </DialogPopup>
+        </Dialog>
       ) : null}
     </div>
   );

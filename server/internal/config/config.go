@@ -6,28 +6,34 @@ import (
 )
 
 type Config struct {
-	Environment   string
-	Host          string
-	VaultPath     string
-	VaultRoot     string
-	AllowedOrigin string
-	Port          string
-	AppDataDir    string
-	DesktopToken  string
+	Environment                string
+	Host                       string
+	VaultPath                  string
+	VaultRoot                  string
+	AllowedOrigin              string
+	Port                       string
+	AppDataDir                 string
+	DesktopToken               string
+	PluginRegistryURL          string
+	PluginRegistrySignatureURL string
+	PluginRegistryPublicKey    string
 }
 
 func Load() *Config {
 	environment := getEnv("ENVIRONMENT", "development")
 	appDataDir := getEnv("FLUX_APP_DATA_DIR", defaultAppDataDir())
 	return &Config{
-		Environment:   environment,
-		Host:          getEnv("HOST", defaultHost(environment)),
-		VaultPath:     os.Getenv("FLUX_VAULT_PATH"),
-		VaultRoot:     defaultVaultRoot(environment, appDataDir),
-		AllowedOrigin: getEnv("CORS_ALLOWED_ORIGIN", "http://localhost:3000"),
-		Port:          getEnv("PORT", "8080"),
-		AppDataDir:    appDataDir,
-		DesktopToken:  os.Getenv("FLUX_DESKTOP_TOKEN"),
+		Environment:                environment,
+		Host:                       getEnv("HOST", defaultHost(environment)),
+		VaultPath:                  os.Getenv("FLUX_VAULT_PATH"),
+		VaultRoot:                  defaultVaultRoot(environment, appDataDir),
+		AllowedOrigin:              getEnv("CORS_ALLOWED_ORIGIN", "http://localhost:3000"),
+		Port:                       getEnv("PORT", "8080"),
+		AppDataDir:                 appDataDir,
+		DesktopToken:               os.Getenv("FLUX_DESKTOP_TOKEN"),
+		PluginRegistryURL:          os.Getenv("FLUX_PLUGIN_REGISTRY_URL"),
+		PluginRegistrySignatureURL: os.Getenv("FLUX_PLUGIN_REGISTRY_SIGNATURE_URL"),
+		PluginRegistryPublicKey:    os.Getenv("FLUX_PLUGIN_REGISTRY_PUBLIC_KEY"),
 	}
 }
 

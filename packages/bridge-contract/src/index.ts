@@ -64,12 +64,31 @@ export interface AppBootstrap {
   settings: Record<string, unknown>;
 }
 
+export interface MCPConnection {
+  id: string;
+  name: string;
+  mode: "read_only" | "guided_write" | "trusted_workspace";
+  vaultIds: string[];
+  createdAt: string;
+  lastUsedAt?: string;
+  revokedAt?: string;
+}
+
+export interface MCPConnectionCredential extends MCPConnection {
+  secret: string;
+}
+
 export interface FileEntry {
   path: string;
   name: string;
   kind: "directory" | "markdown" | "text" | "binary";
   sizeBytes: number;
   modifiedAt: string;
+}
+
+export interface FilePage {
+  entries: FileEntry[];
+  nextCursor?: string;
 }
 
 export interface CreateFileRequest {
@@ -100,6 +119,34 @@ export interface GraphEdge {
 export interface VaultGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
+}
+
+export interface SearchResult {
+  path: string;
+  title: string;
+  excerpt: string;
+}
+
+export interface DocumentReference {
+  source: string;
+  line: number;
+  excerpt: string;
+}
+
+export interface DocumentReferences {
+  linked: DocumentReference[];
+  unlinked: DocumentReference[];
+  outgoing: string[];
+}
+
+export interface FacetCount {
+  name: string;
+  count: number;
+}
+
+export interface VaultFacets {
+  tags: FacetCount[];
+  properties: FacetCount[];
 }
 
 export interface SaveFileRequest {
@@ -147,6 +194,105 @@ export interface PurgeResult {
   deleted: number;
 }
 
+export interface PluginManifest {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  description?: string;
+  publisher?: string;
+  version: string;
+  apiVersion: string;
+  entry: string;
+  requiredPermissions?: string[];
+  optionalPermissions?: string[];
+  activationEvents?: string[];
+  contributes?: {
+    commands?: Array<{ id: string; title: string }>;
+    views?: Array<{
+      id: string;
+      title: string;
+      entry: string;
+      /** Defaults to modal when omitted. */
+      location?: "modal" | "left-sidebar" | "right-sidebar" | "workspace";
+      icon?:
+        | "puzzle"
+        | "sparkles"
+        | "panel-left"
+        | "panel-right"
+        | "layout-dashboard"
+        | "calendar"
+        | "list"
+        | "git-branch";
+      iconPath?: string;
+    }>;
+    settings?: Array<{
+      id: string;
+      title: string;
+      description?: string;
+      type: "string" | "number" | "boolean";
+      default?: unknown;
+    }>;
+  };
+}
+
+export interface InstalledPlugin {
+  pluginId: string;
+  version: string;
+  checksum: string;
+  installPath: string;
+  development: boolean;
+  status: "staged" | "active" | "previous" | "failed" | "removing";
+  installedAt: string;
+  activatedAt?: string;
+  failureReason?: string;
+}
+
+export interface PluginCatalogEntry {
+  manifest: PluginManifest;
+  plugin: InstalledPlugin;
+  active: boolean;
+  viewIcons?: Record<string, string>;
+}
+
+export interface PluginInstallResult {
+  manifest: PluginManifest;
+  plugin: InstalledPlugin;
+}
+
+export interface VaultPlugin {
+  vaultId: string;
+  pluginId: string;
+  enabled: boolean;
+  grantedPermissions: string[];
+  updatedAt: string;
+  failureCount: number;
+  lastError?: string;
+}
+
+export interface RuntimePluginBundle {
+  manifest: PluginManifest;
+  source: string;
+  grantedCapabilities: string[];
+  settings: Record<string, unknown>;
+}
+
+export interface MarketplacePlugin {
+  manifest: PluginManifest;
+  publisher: string;
+  repository: string;
+  downloadUrl: string;
+  sha256: string;
+  readme?: string;
+  changelog?: string;
+  publishedAt: string;
+}
+
+export interface MarketplaceIndex {
+  schemaVersion: 1;
+  updatedAt: string;
+  plugins: MarketplacePlugin[];
+}
+
 /** Transport-neutral boundary consumed by application features. */
 export interface FluxClient {
   getStatus(): Promise<ServerStatus>;
@@ -159,7 +305,51 @@ export interface FluxClient {
   saveWorkspace(windowId: string, vaultId: string, state: unknown): Promise<void>;
   getAppSettings(): Promise<Record<string, unknown>>;
   putAppSetting(key: string, value: unknown): Promise<void>;
+  getVaultConfig(vaultId: string): Promise<Record<string, unknown>>;
+  putVaultConfig(vaultId: string, value: Record<string, unknown>): Promise<void>;
+  listMCPConnections(): Promise<MCPConnection[]>;
+  createMCPConnection(request: {
+    name: string;
+    mode: MCPConnection["mode"];
+    vaultIds: string[];
+  }): Promise<MCPConnectionCredential>;
+  revokeMCPConnection(connectionId: string): Promise<void>;
+  listPlugins(): Promise<PluginCatalogEntry[]>;
+  getMarketplace(): Promise<MarketplaceIndex>;
+  installMarketplacePlugin(pluginId: string): Promise<PluginInstallResult>;
+  installPlugin(packageData: Uint8Array, sha256: string): Promise<PluginInstallResult>;
+  activatePlugin(pluginId: string, version: string): Promise<void>;
+  approvePluginUpdate(
+    vaultId: string,
+    pluginId: string,
+    version: string,
+    grantedPermissions: string[]
+  ): Promise<void>;
+  rollbackPlugin(pluginId: string): Promise<void>;
+  uninstallPlugin(pluginId: string, version: string): Promise<void>;
+  listVaultPlugins(vaultId: string): Promise<VaultPlugin[]>;
+  enableVaultPlugin(vaultId: string, pluginId: string, grantedPermissions: string[]): Promise<void>;
+  disableVaultPlugin(vaultId: string, pluginId: string): Promise<void>;
+  listPluginBundles(vaultId: string): Promise<RuntimePluginBundle[]>;
+  invokePluginCapability(
+    vaultId: string,
+    pluginId: string,
+    capability: string,
+    input: unknown
+  ): Promise<unknown>;
+  getPluginView(
+    vaultId: string,
+    pluginId: string,
+    viewId: string
+  ): Promise<{ id: string; title: string; html: string }>;
+  getPluginSettings(vaultId: string, pluginId: string): Promise<Record<string, unknown>>;
+  putPluginSettings(
+    vaultId: string,
+    pluginId: string,
+    values: Record<string, unknown>
+  ): Promise<void>;
   openVault(request?: OpenVaultRequest): Promise<VaultInfo>;
+  getVaultInfo(vaultId: string): Promise<VaultInfo>;
   createVault(request: Required<OpenVaultRequest>): Promise<VaultInfo>;
   getVaultRevision(vaultId: string): Promise<number>;
   watchVaultRevision(
@@ -173,7 +363,21 @@ export interface FluxClient {
     onError?: (error: Error) => void
   ): () => void;
   listFiles(vaultId: string): Promise<FileEntry[]>;
+  listFileChildren(vaultId: string, parent: string, cursor?: string): Promise<FilePage>;
   getGraph(vaultId: string): Promise<VaultGraph>;
+  searchVault(
+    vaultId: string,
+    query: string,
+    limit?: number,
+    offset?: number,
+    matchCase?: boolean
+  ): Promise<SearchResult[]>;
+  getDocumentReferences(
+    vaultId: string,
+    path: string,
+    includeUnlinked?: boolean
+  ): Promise<DocumentReferences>;
+  getVaultFacets(vaultId: string): Promise<VaultFacets>;
   getFileMetadata(vaultId: string, path: string): Promise<FileEntry | null>;
   rebuildIndex(vaultId: string): Promise<void>;
   createDirectory(vaultId: string, path: string): Promise<FileEntry>;
@@ -188,6 +392,11 @@ export interface FluxClient {
   listTrash(vaultId: string): Promise<TrashEntry[]>;
   permanentlyDelete(vaultId: string, trashId: string): Promise<void>;
   purgeTrash(vaultId: string, retentionDays: TrashRetentionDays): Promise<PurgeResult>;
+  listModelProviders(): Promise<ModelProvider[]>;
+  getModelProvider(providerId: string): Promise<ModelProvider>;
+  updateModelProvider(providerId: string, config: Record<string, unknown>): Promise<void>;
+  listAIRuntimes(): Promise<AIRuntime[]>;
+  getAIRuntime(runtimeId: string): Promise<AIRuntime>;
 }
 
 export interface RuntimeCapabilities {
@@ -196,4 +405,49 @@ export interface RuntimeCapabilities {
   supportsRemoteVaults: boolean;
   isDesktop: boolean;
   isWeb: boolean;
+}
+
+export type ModelProviderType = 
+  | "codex"
+  | "copilot"
+  | "opencode"
+  | "antigravity"
+  | "ollama"
+  | "lmstudio"
+  | "openai"
+  | "anthropic"
+  | "custom";
+
+export interface ModelProvider {
+  id: string;
+  type: ModelProviderType;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  available: boolean;
+  models?: string[];
+  config: Record<string, unknown>;
+  capabilities: string[];
+}
+
+export interface AIRuntimeCapabilities {
+  chat: boolean;
+  streaming: boolean;
+  toolCalling: boolean;
+  vision: boolean;
+  pdfInput: boolean;
+  embeddings: boolean;
+  structuredOutput: boolean;
+  reasoningControls: boolean;
+  contextCaching: boolean;
+  externalAgentLoop: boolean;
+}
+
+export interface AIRuntime {
+  id: string;
+  providerId: string;
+  name: string;
+  model?: string;
+  capabilities: AIRuntimeCapabilities;
+  config: Record<string, unknown>;
 }

@@ -1,0 +1,29 @@
+{
+  "servers": {
+    "shadcn": {
+      "command": "npx",
+      "args": [
+        "shadcn@latest",
+        "mcp"
+      ]
+    },
+    "flux": {
+      "command": "go",
+      "args": [
+        "-C",
+        "server",
+        "run",
+        "-tags",
+        "sqlite_fts5",
+        ".",
+        "mcp",
+        "--vault",
+        "${workspaceFolder}",
+        "--client",
+        "vscode",
+        "--mode",
+        "read_only"
+      ]
+    }
+  }
+}

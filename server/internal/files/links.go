@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/flux-pkm/server/internal/domain"
 )
 
 var (
@@ -78,10 +80,35 @@ func (s *Service) planLinkRewrites(sourcePath, destinationPath string) ([]linkRe
 	if err != nil {
 		return nil, err
 	}
+	return s.planLinkRewritesFromPaths(sourcePath, destinationPath, filesByPath, markdownPaths)
+}
 
+func (s *Service) planLinkRewritesFromCatalog(
+	sourcePath, destinationPath string,
+	entries []domain.FileEntry,
+	linkSources []string,
+) ([]linkRewrite, error) {
+	filesByPath := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if entry.Kind != domain.FileKindDirectory {
+			filesByPath[entry.Path] = struct{}{}
+		}
+	}
+	return s.planLinkRewritesFromPaths(sourcePath, destinationPath, filesByPath, linkSources)
+}
+
+func (s *Service) planLinkRewritesFromPaths(
+	sourcePath, destinationPath string,
+	filesByPath map[string]struct{},
+	markdownPaths []string,
+) ([]linkRewrite, error) {
 	rewrites := make([]linkRewrite, 0)
 	for _, notePath := range markdownPaths {
 		content, err := os.ReadFile(filepath.Join(s.root, filepath.FromSlash(notePath)))
+		if errors.Is(err, os.ErrNotExist) {
+			// Watcher may not have replaced an indexed source path from a preceding move yet.
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}

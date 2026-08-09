@@ -33,6 +33,24 @@ func TestWatcherReportsExternalChange(t *testing.T) {
 	}
 }
 
+func TestWatcherIgnoresUnsupportedFileChanges(t *testing.T) {
+	root := t.TempDir()
+	changed := make(chan []Event, 1)
+	watcher, err := Start(root, func(events []Event) { changed <- events })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = watcher.Close() })
+	if err := os.WriteFile(filepath.Join(root, "build.tmp"), []byte("noise"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case events := <-changed:
+		t.Fatalf("unsupported file triggered indexing: %#v", events)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
 func TestWatcherAddsNewDirectoriesRecursively(t *testing.T) {
 	root := t.TempDir()
 	changed := make(chan struct{}, 4)

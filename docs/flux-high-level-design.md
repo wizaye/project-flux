@@ -366,6 +366,7 @@ vault/
 ├── .git/                        # Optional Git repository
 └── .flux/
     ├── vault.json
+    ├── config.json                # Durable per-vault Flux feature settings
     ├── index.db
     ├── recovery/
     ├── trash/
@@ -1215,6 +1216,12 @@ A trusted marketplace registry contains:
 - Optional permissions.
 - Changelog.
 
+Registry is a separate metadata repository. Plugin source and release artifacts stay in
+publisher repositories. Generated `registry.json` snapshots bounded publisher README
+content and release metadata; detached Ed25519 signature covers exact index bytes.
+Flux verifies registry signature, package checksum, and packaged manifest before staging.
+Landing page reads same public index. See `docs/plugin-marketplace.md`.
+
 Plugins are installed globally once:
 
 ```text
@@ -1339,6 +1346,19 @@ Continuous background execution requires `background.run`, intervals, quotas, an
 - Show retained size.
 - Offer “delete all state now.”
 - Periodically prune orphaned state.
+
+### 21.7 Plugin Settings
+
+Manifest-declared settings render through shared desktop/web UI. Values are validated by
+declared type and stored per vault at:
+
+```text
+.flux/plugins/<plugin-id>/state/settings.json
+```
+
+Plugin runtime receives an immutable settings snapshot at activation. Saving settings
+restarts that vault's isolated plugin runtime so new values apply without granting direct
+filesystem access.
 
 ---
 
@@ -2151,54 +2171,62 @@ The AI Chat plugin and external MCP clients share one tool registry.
 Representative tools:
 
 ```text
-flux.list_vaults
-flux.get_vault
-flux.get_vault_status
+flux_list_vaults
+flux_get_vault
+flux_get_vault_status
 
-flux.list_files
-flux.read_file
-flux.create_directory
-flux.create_file
-flux.update_file
-flux.move_file
-flux.delete_file
-flux.restore_file
+flux_list_files
+flux_read_file
+flux_create_directory
+flux_create_file
+flux_update_file
+flux_move_file
+flux_delete_file
+flux_restore_file
 
-flux.search
-flux.get_backlinks
-flux.get_outgoing_links
-flux.get_broken_links
-flux.resolve_link
-flux.get_graph_neighbors
-flux.create_link
-flux.remove_link
+flux_search
+flux_get_backlinks
+flux_get_outgoing_links
+flux_get_broken_links
+flux_resolve_link
+flux_get_graph_neighbors
+flux_create_link
+flux_remove_link
 
-flux.list_tasks
-flux.create_task
-flux.update_task
-flux.complete_task
-flux.move_task
+flux_list_tasks
+flux_create_task
+flux_update_task
+flux_complete_task
+flux_move_task
 
-flux.get_frontmatter
-flux.update_frontmatter
-flux.list_tags
-flux.add_tag
-flux.remove_tag
+flux_get_frontmatter
+flux_update_frontmatter
+flux_list_tags
+flux_add_tag
+flux_remove_tag
 
-flux.git_status
-flux.git_diff
-flux.git_commit
-flux.git_pull
-flux.git_push
+flux_git_status
+flux_git_diff
+flux_git_commit
+flux_git_pull
+flux_git_push
 ```
 
 For reliable multi-file changes, Flux may expose:
 
 ```text
-flux.apply_vault_plan
+flux_apply_vault_plan
 ```
 
-`flux.apply_vault_plan` validates the entire operation set before applying it through normal path validation, locking, atomic writes, conflict handling, indexing, and event emission.
+`flux_apply_vault_plan` validates the entire operation set before applying it through normal path validation, locking, atomic writes, conflict handling, indexing, and event emission.
+
+Before its first canonical write, it persists a private write-ahead journal under
+`.flux/recovery/vault-plans/`. Journal contains normalized paths, original content hashes
+and content required for rollback, plus target hashes. A committed marker is flushed only
+after every file write succeeds. On next vault open, an uncommitted plan rolls back only
+files still matching recorded target hashes; unexpected external changes stop recovery and
+degrade vault instead of overwriting user data. Committed journals are cleaned without
+rollback.
 
 ### 37.5 Tutor Mode Workflow
 
@@ -2456,7 +2484,128 @@ git reset: deny
 13. Destructive AI actions are capability-scoped and approval-controlled.
 14. Provider limitations must never corrupt vault content.
 
-## 38. Recommended Implementation Phases
+### 37.12 Production MCP Connections
+
+`--vault` is a development and operator-controlled headless override, not the normal
+desktop authorization model.
+
+Production MCP access is configured in **Settings → MCP connections**:
+
+1. User creates a named connection.
+2. Flux generates an opaque connection ID and an unguessable bearer secret.
+3. User selects allowed vaults, capabilities, and approval mode.
+4. Global app DB stores connection metadata, a one-way secret hash, grants, creation time,
+   last-used time, and revocation state.
+5. Generated client configuration contains the bundled `flux-server` path, connection ID,
+   and secret. Human-readable client name is display metadata, never authentication.
+6. MCP bridge attaches to the existing daemon or starts the same packaged binary in daemon mode.
+7. `flux_list_vaults` returns every vault granted to that connection.
+8. Every vault tool receives an explicit `vaultId`; there is no mutable process-global active vault.
+
+Connection secrets are shown only when created or rotated. Revocation takes effect for new
+requests, including already-running bridges. Secrets never enter a vault, logs, telemetry, or
+generated notes.
+
+Multiple MCP bridges may concurrently use different or identical vaults. All operations still
+pass through the shared daemon, vault mutation coordinator, capability policy, atomic writes,
+conflict checks, watcher, and indexer.
+
+Packaged users do not install Go. Config generation resolves the installed sidecar path:
+
+```text
+macOS:   /Applications/FLUX.app/Contents/Resources/flux-server
+Windows: <install directory>/resources/flux-server.exe
+Linux:   <install directory>/resources/flux-server
+```
+
+Paths are discovered from the running application rather than assumed from these examples.
+Developer configuration may continue using `go run ... mcp --vault ...`.
+
+## 38. Daily Notes, Calendar, Quick Capture, and Native Commands
+
+### 38.1 Canonical Daily and Weekly Notes
+
+Daily and weekly notes are ordinary Markdown files. They remain readable and editable without
+Flux, plugins, SQLite, or a calendar view.
+
+Default conventions:
+
+```text
+Daily/YYYY-MM-DD.md
+Daily/Weekly/YYYY-Www.md
+Inbox/
+```
+
+Folder, filename format, template, week-start day, and capture target are configurable per vault
+in `.flux/config.json`. Date identity uses the user's configured IANA time zone; ISO week-year
+rules are used when the weekly format contains an ISO week token. Invalid or ambiguous formats
+are rejected before creating files.
+
+Creating or opening a date note uses normal application services. Creation is atomic and handles
+the create race by opening the winner when another window or process creates the same path first.
+Templates are copied into the new Markdown file; templates never become a second source of truth.
+
+### 38.2 Calendar
+
+Calendar is a shared desktop/web view derived from vault files and the rebuildable index:
+
+- Existing-note indicators come from file/index metadata.
+- Selecting a date opens the corresponding note.
+- Explicit create action creates a missing note.
+- Week navigation uses configured locale and week-start day.
+- Calendar owns no canonical event or note database.
+
+Indexing may temporarily make indicators incomplete, but direct date-note lookup must still work.
+
+### 38.3 Quick Capture
+
+Quick Capture is a singleton desktop window with a configurable global shortcut. It targets an
+explicitly configured vault and either a named Markdown file in the inbox folder or today's daily note. Flux never silently
+chooses another vault when the target is unavailable.
+
+Save pipeline:
+
+```text
+capture text
+    -> validate configured vault and destination
+    -> Flux application service
+    -> vault mutation coordinator
+    -> conflict-safe create or append
+    -> atomic filesystem write to ordinary Markdown
+    -> watcher and index update
+    -> success acknowledgement
+    -> hide capture window and restore previous application focus
+```
+
+Appending reads the latest content hash and uses the normal conflict-safe patch path. A conflict
+causes a bounded reread-and-retry; it never overwrites concurrent edits. Capture window remains
+open with text intact until filesystem save succeeds. On failure it shows a concrete recovery
+action. An optional crash draft may live in global app storage, but it is not considered saved
+content and is deleted after the Markdown write succeeds.
+
+Renderer, native menu, and global-shortcut handlers never write files directly. Quick Capture
+does not write SQLite indexes directly. The application service is the single mutation path.
+
+Web/self-hosted mode supports Daily Notes and Calendar but not desktop global shortcuts or the
+native compact capture window. A web capture surface may call the same application service.
+
+### 38.4 Native Menus and Shared Commands
+
+Native File, Navigate, and Workspace menus dispatch the same typed command registry used by
+buttons, shortcuts, command palette, and plugin contributions. Commands receive explicit window
+and vault context. Menus contain no separate file, navigation, or capture business logic.
+
+### 38.5 Daily and Capture Invariants
+
+1. Successful captures exist as ordinary Markdown on the filesystem.
+2. UI never reports capture success before atomic filesystem save succeeds.
+3. SQLite, calendar state, and crash drafts are never the only copy of saved content.
+4. Concurrent daily-note creation and capture append never lose existing content.
+5. Quick Capture never silently changes target vault or destination.
+6. Calendar and native menus reuse shared application services and commands.
+7. Desktop-only shell features do not fork desktop and web note semantics.
+
+## 39. Recommended Implementation Phases
 
 ### Phase 1: Core Vault and Editor
 
@@ -2523,7 +2672,7 @@ git reset: deny
 
 ---
 
-## 39. Final Invariants
+## 40. Final Invariants
 
 These invariants must remain true throughout implementation:
 

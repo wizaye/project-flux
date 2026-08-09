@@ -1,8 +1,12 @@
 package api
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,9 +19,16 @@ import (
 	application "github.com/flux-pkm/server/internal/app"
 	"github.com/flux-pkm/server/internal/appdata"
 	"github.com/flux-pkm/server/internal/domain"
+	"github.com/flux-pkm/server/internal/plugins"
 	"github.com/flux-pkm/server/internal/vault"
 	"github.com/gin-gonic/gin"
 )
+
+type acceptingPluginRuntime struct{}
+
+func (acceptingPluginRuntime) ValidatePackage(context.Context, plugins.InstalledPlugin, plugins.Manifest) error {
+	return nil
+}
 
 func TestOpenUserSelectedVault(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -201,6 +212,90 @@ func TestDesktopTokenProtectsAPIRoutes(t *testing.T) {
 	if authorizedResponse.Code != http.StatusOK {
 		t.Fatalf("expected authorized request, got %d", authorizedResponse.Code)
 	}
+}
+
+func TestPluginLifecycleRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	appDirectory := t.TempDir()
+	store, err := appdata.Open(filepath.Join(appDirectory, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	pluginStore, err := plugins.NewMetadataStore(store.Database(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pluginManager, err := plugins.NewManager(appDirectory, pluginStore, acceptingPluginRuntime{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultManager := vault.NewManager("", true)
+	t.Cleanup(func() { _ = vaultManager.Close() })
+	service := application.NewService(vaultManager)
+	router := gin.New()
+	RegisterRoutes(router, service, WithAppData(store), WithPlugins(pluginManager))
+
+	archive := pluginArchive(t)
+	digest := sha256.Sum256(archive)
+	requestJSON(t, router, http.MethodPost, "/api/v1/plugins/install", map[string]any{
+		"packageBase64": base64.StdEncoding.EncodeToString(archive),
+		"sha256":        hex.EncodeToString(digest[:]),
+	}, http.StatusCreated)
+	requestJSON(t, router, http.MethodPost, "/api/v1/plugins/example.plugin/1.0.0/activate", nil, http.StatusNoContent)
+
+	vaultRoot := t.TempDir()
+	info, err := service.OpenVault(vaultRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestJSON(t, router, http.MethodPut, "/api/v1/vaults/"+info.ID+"/plugins/example.plugin", map[string]any{
+		"grantedPermissions": []string{"vault.read"},
+	}, http.StatusOK)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/vaults/"+info.ID+"/plugins", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"enabled":true`) {
+		t.Fatalf("plugin was not enabled: %d %s", response.Code, response.Body.String())
+	}
+	requestJSON(t, router, http.MethodPut, "/api/v1/vaults/"+info.ID+"/plugins/example.plugin/settings", map[string]any{
+		"values": map[string]any{"example.plugin.label": "vault value"},
+	}, http.StatusNoContent)
+	settingsRequest := httptest.NewRequest(http.MethodGet, "/api/v1/vaults/"+info.ID+"/plugins/example.plugin/settings", nil)
+	settingsResponse := httptest.NewRecorder()
+	router.ServeHTTP(settingsResponse, settingsRequest)
+	if settingsResponse.Code != http.StatusOK || !strings.Contains(settingsResponse.Body.String(), `"vault value"`) {
+		t.Fatalf("plugin settings missing: %d %s", settingsResponse.Code, settingsResponse.Body.String())
+	}
+	bundleRequest := httptest.NewRequest(http.MethodGet, "/api/v1/vaults/"+info.ID+"/plugin-bundles", nil)
+	bundleResponse := httptest.NewRecorder()
+	router.ServeHTTP(bundleResponse, bundleRequest)
+	if bundleResponse.Code != http.StatusOK || !strings.Contains(bundleResponse.Body.String(), `"vault value"`) {
+		t.Fatalf("runtime settings missing: %d %s", bundleResponse.Code, bundleResponse.Body.String())
+	}
+}
+
+func pluginArchive(t *testing.T) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	manifest := `{"schemaVersion":1,"id":"example.plugin","name":"Example","version":"1.0.0","apiVersion":"1","entry":"dist/main.js","requiredPermissions":["vault.read"],"contributes":{"settings":[{"id":"example.plugin.label","title":"Label","type":"string","default":"hello"}]}}`
+	for name, content := range map[string]string{
+		plugins.ManifestFile: manifest,
+		"dist/main.js":       "export default { activate() {} };",
+	} {
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
 }
 
 func requestJSON(t *testing.T, router http.Handler, method, path string, body any, expectedStatus int) {

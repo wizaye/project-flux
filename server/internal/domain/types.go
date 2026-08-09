@@ -98,6 +98,45 @@ type SaveResult struct {
 	ModifiedAt  time.Time `json:"modifiedAt"`
 }
 
+type VaultPlanOperation struct {
+	Action       string `json:"action"`
+	Path         string `json:"path"`
+	Content      string `json:"content"`
+	ExpectedHash string `json:"expectedHash,omitempty"`
+}
+
+type VaultPlanResult struct {
+	Files []SaveResult `json:"files"`
+}
+
+type SearchResult struct {
+	Path    string `json:"path"`
+	Title   string `json:"title"`
+	Excerpt string `json:"excerpt"`
+}
+
+type DocumentReference struct {
+	Source  string `json:"source"`
+	Line    int    `json:"line"`
+	Excerpt string `json:"excerpt"`
+}
+
+type DocumentReferences struct {
+	Linked   []DocumentReference `json:"linked"`
+	Unlinked []DocumentReference `json:"unlinked"`
+	Outgoing []string            `json:"outgoing"`
+}
+
+type FacetCount struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+type VaultFacets struct {
+	Tags       []FacetCount `json:"tags"`
+	Properties []FacetCount `json:"properties"`
+}
+
 type TrashEntry struct {
 	ID           string    `json:"id"`
 	OriginalPath string    `json:"originalPath"`
@@ -114,4 +153,52 @@ type ServerStatus struct {
 	Version         string     `json:"version"`
 	VaultConfigured bool       `json:"vaultConfigured"`
 	OpenVault       *VaultInfo `json:"openVault"`
+}
+
+type ModelProviderType string
+
+const (
+	ModelProviderTypeCodex       ModelProviderType = "codex"
+	ModelProviderTypeCopilot     ModelProviderType = "copilot"
+	ModelProviderTypeOpenCode    ModelProviderType = "opencode"
+	ModelProviderTypeAntigravity ModelProviderType = "antigravity"
+	ModelProviderTypeOllama      ModelProviderType = "ollama"
+	ModelProviderTypeLMStudio    ModelProviderType = "lmstudio"
+	ModelProviderTypeOpenAI      ModelProviderType = "openai"
+	ModelProviderTypeAnthropic   ModelProviderType = "anthropic"
+	ModelProviderTypeCustom      ModelProviderType = "custom"
+)
+
+type ModelProvider struct {
+	ID           string                 `json:"id"`
+	Type         ModelProviderType      `json:"type"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description,omitempty"`
+	Enabled      bool                   `json:"enabled"`
+	Available    bool                   `json:"available"`
+	Models       []string               `json:"models,omitempty"`
+	Config       map[string]interface{} `json:"config"`
+	Capabilities []string               `json:"capabilities"`
+}
+
+type AIRuntimeCapabilities struct {
+	Chat              bool `json:"chat"`
+	Streaming         bool `json:"streaming"`
+	ToolCalling       bool `json:"toolCalling"`
+	Vision            bool `json:"vision"`
+	PDFInput          bool `json:"pdfInput"`
+	Embeddings        bool `json:"embeddings"`
+	StructuredOutput  bool `json:"structuredOutput"`
+	ReasoningControls bool `json:"reasoningControls"`
+	ContextCaching    bool `json:"contextCaching"`
+	ExternalAgentLoop bool `json:"externalAgentLoop"`
+}
+
+type AIRuntime struct {
+	ID           string                 `json:"id"`
+	ProviderID   string                 `json:"providerId"`
+	Name         string                 `json:"name"`
+	Model        string                 `json:"model,omitempty"`
+	Capabilities AIRuntimeCapabilities  `json:"capabilities"`
+	Config       map[string]interface{} `json:"config"`
 }

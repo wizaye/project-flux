@@ -159,6 +159,11 @@ bun run build --filter=@flux/web
 
 Vite dependency optimization caches are stored under `.cache/vite` at the repository root. The app workspaces do not maintain separate dependency installations; `bun install` owns the single root `node_modules` tree.
 
+Developer guides:
+
+- [Flux MCP with VS Code](docs/mcp-development.md)
+- [External plugin development](docs/plugin-development.md)
+
 ### Package Structure
 
 #### `packages/app-core`
@@ -293,3 +298,5 @@ The output will be in the `dist/` directory and can be deployed to any static ho
 - [ ] Cloud sync
 - [ ] Mobile application
 - [ ] Plugin system
+
+[hello](https://www.github.com/wizaye)

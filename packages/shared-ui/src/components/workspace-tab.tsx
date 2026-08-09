@@ -11,9 +11,15 @@ import {
   PinOff,
   X,
 } from "lucide-react";
-import { ContextMenu, DropdownMenu } from "radix-ui";
-
 import { cn } from "../lib/utils";
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuPopup,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "./ui/context-menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./ui/menu";
 
 export interface FluxTabCommands {
   pinned?: boolean;
@@ -46,12 +52,6 @@ export interface FluxEditorPaneProps extends FluxTabCommands {
   className?: string;
 }
 
-const menuContentClassName =
-  "z-[110] min-w-52 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg [border-color:var(--layout-separator)]";
-const menuItemClassName =
-  "relative flex h-8 cursor-default select-none items-center gap-2 rounded-md px-2 pr-7 text-sm outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground";
-const separatorClassName = "my-1 h-px bg-[var(--layout-separator)]";
-
 function ContextCommands({
   pinned,
   canCloseOthers,
@@ -67,32 +67,29 @@ function ContextCommands({
 }: FluxTabCommands) {
   return (
     <>
-      <ContextMenu.Item className={menuItemClassName} disabled={!onClose} onSelect={onClose}>
+      <ContextMenuItem disabled={!onClose} onClick={onClose}>
         <X className="size-4 text-muted-foreground" />
         Close
-      </ContextMenu.Item>
-      <ContextMenu.Item
-        className={menuItemClassName}
+      </ContextMenuItem>
+      <ContextMenuItem
         disabled={!onCloseOthers || !canCloseOthers}
-        onSelect={onCloseOthers}
+        onClick={onCloseOthers}
       >
         Close others
-      </ContextMenu.Item>
-      <ContextMenu.Item
-        className={menuItemClassName}
+      </ContextMenuItem>
+      <ContextMenuItem
         disabled={!onCloseAfter || !canCloseAfter}
-        onSelect={onCloseAfter}
+        onClick={onCloseAfter}
       >
         Close tabs after
-      </ContextMenu.Item>
-      <ContextMenu.Item className={menuItemClassName} disabled={!onCloseAll} onSelect={onCloseAll}>
+      </ContextMenuItem>
+      <ContextMenuItem disabled={!onCloseAll} onClick={onCloseAll}>
         Close all
-      </ContextMenu.Item>
-      <ContextMenu.Separator className={separatorClassName} />
-      <ContextMenu.Item
-        className={menuItemClassName}
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem
         disabled={!onTogglePin}
-        onSelect={onTogglePin}
+        onClick={onTogglePin}
       >
         {pinned ? (
           <PinOff className="size-4 text-muted-foreground" />
@@ -100,36 +97,33 @@ function ContextCommands({
           <Pin className="size-4 text-muted-foreground" />
         )}
         {pinned ? "Unpin" : "Pin"}
-      </ContextMenu.Item>
-      <ContextMenu.Item className={menuItemClassName} disabled>
+      </ContextMenuItem>
+      <ContextMenuItem disabled>
         <Link2 className="size-4" />
         Link with tab…
-      </ContextMenu.Item>
-      <ContextMenu.Separator className={separatorClassName} />
-      <ContextMenu.Item
-        className={menuItemClassName}
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem
         disabled={!onMoveToNewWindow}
-        onSelect={onMoveToNewWindow}
+        onClick={onMoveToNewWindow}
       >
         <ExternalLink className="size-4" />
         Move to new window
-      </ContextMenu.Item>
-      <ContextMenu.Item
-        className={menuItemClassName}
+      </ContextMenuItem>
+      <ContextMenuItem
         disabled={!onSplitRight}
-        onSelect={onSplitRight}
+        onClick={onSplitRight}
       >
         <PanelRightOpen className="size-4" />
         Split right
-      </ContextMenu.Item>
-      <ContextMenu.Item
-        className={menuItemClassName}
+      </ContextMenuItem>
+      <ContextMenuItem
         disabled={!onSplitDown}
-        onSelect={onSplitDown}
+        onClick={onSplitDown}
       >
         <PanelBottomOpen className="size-4" />
         Split down
-      </ContextMenu.Item>
+      </ContextMenuItem>
     </>
   );
 }
@@ -149,32 +143,29 @@ function DropdownCommands({
 }: FluxTabCommands) {
   return (
     <>
-      <DropdownMenu.Item className={menuItemClassName} disabled={!onClose} onSelect={onClose}>
+      <MenuItem disabled={!onClose} onClick={onClose}>
         <X className="size-4 text-muted-foreground" />
         Close
-      </DropdownMenu.Item>
-      <DropdownMenu.Item
-        className={menuItemClassName}
+      </MenuItem>
+      <MenuItem
         disabled={!onCloseOthers || !canCloseOthers}
-        onSelect={onCloseOthers}
+        onClick={onCloseOthers}
       >
         Close others
-      </DropdownMenu.Item>
-      <DropdownMenu.Item
-        className={menuItemClassName}
+      </MenuItem>
+      <MenuItem
         disabled={!onCloseAfter || !canCloseAfter}
-        onSelect={onCloseAfter}
+        onClick={onCloseAfter}
       >
         Close tabs after
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} disabled={!onCloseAll} onSelect={onCloseAll}>
+      </MenuItem>
+      <MenuItem disabled={!onCloseAll} onClick={onCloseAll}>
         Close all
-      </DropdownMenu.Item>
-      <DropdownMenu.Separator className={separatorClassName} />
-      <DropdownMenu.Item
-        className={menuItemClassName}
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem
         disabled={!onTogglePin}
-        onSelect={onTogglePin}
+        onClick={onTogglePin}
       >
         {pinned ? (
           <PinOff className="size-4 text-muted-foreground" />
@@ -182,47 +173,40 @@ function DropdownCommands({
           <Pin className="size-4 text-muted-foreground" />
         )}
         {pinned ? "Unpin" : "Pin"}
-      </DropdownMenu.Item>
-      <DropdownMenu.Item
-        className={menuItemClassName}
+      </MenuItem>
+      <MenuItem
         disabled={!onMoveToNewWindow}
-        onSelect={onMoveToNewWindow}
+        onClick={onMoveToNewWindow}
       >
         <ExternalLink className="size-4" />
         Move to new window
-      </DropdownMenu.Item>
-      <DropdownMenu.Item
-        className={menuItemClassName}
+      </MenuItem>
+      <MenuItem
         disabled={!onSplitRight}
-        onSelect={onSplitRight}
+        onClick={onSplitRight}
       >
         <PanelRightOpen className="size-4" />
         Split right
-      </DropdownMenu.Item>
-      <DropdownMenu.Item
-        className={menuItemClassName}
+      </MenuItem>
+      <MenuItem
         disabled={!onSplitDown}
-        onSelect={onSplitDown}
+        onClick={onSplitDown}
       >
         <PanelBottomOpen className="size-4" />
         Split down
-      </DropdownMenu.Item>
+      </MenuItem>
     </>
   );
 }
 
 export function FluxTabContextMenu({ children, ...commands }: FluxTabContextMenuProps) {
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
-        <div className="contents">{children}</div>
-      </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Content className={menuContentClassName}>
-          <ContextCommands {...commands} />
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+    <ContextMenu>
+      <ContextMenuTrigger render={<div className="contents" />}>{children}</ContextMenuTrigger>
+      <ContextMenuPopup className="z-[110] min-w-52">
+        <ContextCommands {...commands} />
+      </ContextMenuPopup>
+    </ContextMenu>
   );
 }
 
@@ -242,11 +226,11 @@ export function FluxEditorPane({
   return (
     <section
       className={cn(
-        "flux-editor-pane flex h-full min-h-0 min-w-0 flex-col bg-background",
+        "flux-editor-pane flex h-full min-h-0 min-w-0 flex-col bg-sidebar",
         className
       )}
     >
-      <header className="flux-editor-pane-header relative flex h-9 shrink-0 items-center px-2 text-muted-foreground">
+      <header className="flux-editor-pane-header relative flex h-9 shrink-0 items-center border-b px-2 text-muted-foreground [border-color:var(--layout-separator)]">
         <div className="flex items-center gap-0.5">
           <button
             type="button"
@@ -274,25 +258,23 @@ export function FluxEditorPane({
 
         {headerAction ? <div className="ml-auto flex items-center">{headerAction}</div> : null}
 
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <button
+        <Menu>
+          <MenuTrigger
+            render={<button
               type="button"
               aria-label={menuLabel}
               className={cn(
-                "grid size-7 place-items-center rounded-md outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/50 data-[state=open]:bg-accent data-[state=open]:text-foreground",
+                "grid size-7 place-items-center rounded-md outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/50 data-popup-open:bg-accent data-popup-open:text-foreground",
                 !headerAction && "ml-auto"
               )}
-            >
-              <Ellipsis className="size-4" />
-            </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content align="end" sideOffset={5} className={menuContentClassName}>
-              {menuContent ?? <DropdownCommands {...commands} />}
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
+            />}
+          >
+            <Ellipsis className="size-4" />
+          </MenuTrigger>
+          <MenuPopup align="end" sideOffset={5} className="z-[110] min-w-52">
+            {menuContent ?? <DropdownCommands {...commands} />}
+          </MenuPopup>
+        </Menu>
       </header>
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
     </section>

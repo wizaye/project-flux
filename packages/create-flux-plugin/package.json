@@ -1,0 +1,31 @@
+{
+  "name": "create-flux-plugin",
+  "version": "0.1.0",
+  "description": "Create, validate, and package Flux plugins",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "create-flux-plugin": "./dist/cli.js",
+    "flux-plugin": "./dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "rm -rf dist && bun build src/cli.ts --outfile dist/cli.js --target node --format esm && bun build src/index.ts --outfile dist/index.js --target node --format esm",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "^6.0.2"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "license": "MIT"
+}

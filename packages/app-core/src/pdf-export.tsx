@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { Dialog } from "radix-ui";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogPopup,
+  DialogTitle,
+} from "@flux/shared-ui/components/ui/dialog";
 import ReadingView from "./reading-view";
 import { splitFrontmatter } from "./frontmatter";
 import type { DemoDocument } from "./markdown-editor";
@@ -85,14 +91,16 @@ export function PdfExportDialog({
         {includeTitle ? <h1 className="flux-print-title">{document.title}</h1> : null}
         <ReadingView value={body} documents={documents} />
       </div>
-      <Dialog.Root open={open} onOpenChange={onOpenChange}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[180] bg-black/50 backdrop-blur-[1px]" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-[181] w-[min(500px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-popover p-5 text-popover-foreground shadow-2xl [border-color:var(--layout-separator)]">
-            <Dialog.Title className="text-lg font-semibold">Export to PDF</Dialog.Title>
-            <Dialog.Description className="mt-1 text-sm text-muted-foreground">
+      <Dialog open={open} onOpenChange={onOpenChange}>
+          <DialogPopup
+            bottomStickOnMobile={false}
+            showCloseButton={false}
+            className="w-[min(500px,calc(100vw-2rem))] rounded-xl p-5"
+          >
+            <DialogTitle className="text-lg font-semibold">Export to PDF</DialogTitle>
+            <DialogDescription className="mt-1 text-sm text-muted-foreground">
               Export “{document.title}” as a clean, selectable-text document.
-            </Dialog.Description>
+            </DialogDescription>
             <div className="mt-5 divide-y [border-color:var(--layout-separator)] [&>*]:border-[var(--layout-separator)]">
               <label className="flex items-center justify-between border-b py-3 text-sm">
                 Include file name as title
@@ -152,9 +160,9 @@ export function PdfExportDialog({
               {error ? (
                 <p className="mr-auto self-center text-xs text-destructive">{error}</p>
               ) : null}
-              <Dialog.Close className="rounded-md px-3 py-2 text-sm hover:bg-accent">
+              <DialogClose className="rounded-md px-3 py-2 text-sm hover:bg-accent">
                 Cancel
-              </Dialog.Close>
+              </DialogClose>
               <button
                 type="button"
                 onClick={print}
@@ -164,9 +172,8 @@ export function PdfExportDialog({
                 {exporting ? "Exporting…" : "Export to PDF"}
               </button>
             </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+          </DialogPopup>
+      </Dialog>
     </>
   );
 }

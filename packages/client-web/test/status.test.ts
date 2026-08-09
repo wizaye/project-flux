@@ -96,6 +96,23 @@ test("loads and saves durable workspace state", async () => {
   });
 });
 
+test("loads and saves protected per-vault config", async () => {
+  const fetchMock = mock(async (_input: RequestInfo | URL, init?: RequestInit) =>
+    init?.method === "PUT"
+      ? new Response(null, { status: 204 })
+      : Response.json({ dailyFolder: "Journal" })
+  );
+  const client = new WebFluxClient("/api/v1", fetchMock as typeof fetch);
+
+  await expect(client.getVaultConfig("vault/id")).resolves.toEqual({ dailyFolder: "Journal" });
+  await client.putVaultConfig("vault/id", { dailyFolder: "Daily" });
+  expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/v1/vaults/vault%2Fid/config", {
+    method: "PUT",
+    body: JSON.stringify({ dailyFolder: "Daily" }),
+    headers: { "Content-Type": "application/json" },
+  });
+});
+
 test("discovers vaults registered inside the server storage root", async () => {
   const fetchMock = mock(async () =>
     Response.json([{ vaultId: "vault/id", name: "Notes", path: "Notes" }])
@@ -131,6 +148,44 @@ test("loads path-keyed vault graph", async () => {
 
   await expect(client.getGraph("vault/id")).resolves.toEqual(graph);
   expect(fetchMock).toHaveBeenCalledWith("/api/v1/vaults/vault%2Fid/graph", {
+    headers: { "Content-Type": "application/json" },
+  });
+});
+
+test("queries indexed sidebar data", async () => {
+  const fetchMock = mock(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/search?")) {
+      return Response.json([{ path: "notes/a.md", title: "a.md", excerpt: "matching text" }]);
+    }
+    if (url.includes("/references?")) {
+      return Response.json({ linked: [], unlinked: [], outgoing: ["notes/b.md"] });
+    }
+    return Response.json({ tags: [{ name: "flux", count: 2 }], properties: [] });
+  });
+  const client = new WebFluxClient("/api/v1", fetchMock as typeof fetch);
+
+  await client.searchVault("vault/id", "tag:flux", 25);
+  await client.getDocumentReferences("vault/id", "notes/a.md");
+  await client.getDocumentReferences("vault/id", "notes/a.md", true);
+  await client.getVaultFacets("vault/id");
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "/api/v1/vaults/vault%2Fid/search?q=tag%3Aflux&limit=25&offset=0&matchCase=false",
+    { headers: { "Content-Type": "application/json" } }
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/v1/vaults/vault%2Fid/references?path=notes%2Fa.md",
+    { headers: { "Content-Type": "application/json" } }
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    3,
+    "/api/v1/vaults/vault%2Fid/references?path=notes%2Fa.md&includeUnlinked=true",
+    { headers: { "Content-Type": "application/json" } }
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(4, "/api/v1/vaults/vault%2Fid/facets", {
     headers: { "Content-Type": "application/json" },
   });
 });
