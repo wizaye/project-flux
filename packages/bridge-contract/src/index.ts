@@ -221,7 +221,9 @@ export interface PluginManifest {
         | "panel-right"
         | "layout-dashboard"
         | "calendar"
-        | "list";
+        | "list"
+        | "git-branch";
+      iconPath?: string;
     }>;
     settings?: Array<{
       id: string;
@@ -249,6 +251,7 @@ export interface PluginCatalogEntry {
   manifest: PluginManifest;
   plugin: InstalledPlugin;
   active: boolean;
+  viewIcons?: Record<string, string>;
 }
 
 export interface PluginInstallResult {
@@ -316,6 +319,12 @@ export interface FluxClient {
   installMarketplacePlugin(pluginId: string): Promise<PluginInstallResult>;
   installPlugin(packageData: Uint8Array, sha256: string): Promise<PluginInstallResult>;
   activatePlugin(pluginId: string, version: string): Promise<void>;
+  approvePluginUpdate(
+    vaultId: string,
+    pluginId: string,
+    version: string,
+    grantedPermissions: string[]
+  ): Promise<void>;
   rollbackPlugin(pluginId: string): Promise<void>;
   uninstallPlugin(pluginId: string, version: string): Promise<void>;
   listVaultPlugins(vaultId: string): Promise<VaultPlugin[]>;
@@ -383,6 +392,11 @@ export interface FluxClient {
   listTrash(vaultId: string): Promise<TrashEntry[]>;
   permanentlyDelete(vaultId: string, trashId: string): Promise<void>;
   purgeTrash(vaultId: string, retentionDays: TrashRetentionDays): Promise<PurgeResult>;
+  listModelProviders(): Promise<ModelProvider[]>;
+  getModelProvider(providerId: string): Promise<ModelProvider>;
+  updateModelProvider(providerId: string, config: Record<string, unknown>): Promise<void>;
+  listAIRuntimes(): Promise<AIRuntime[]>;
+  getAIRuntime(runtimeId: string): Promise<AIRuntime>;
 }
 
 export interface RuntimeCapabilities {
@@ -391,4 +405,49 @@ export interface RuntimeCapabilities {
   supportsRemoteVaults: boolean;
   isDesktop: boolean;
   isWeb: boolean;
+}
+
+export type ModelProviderType = 
+  | "codex"
+  | "copilot"
+  | "opencode"
+  | "antigravity"
+  | "ollama"
+  | "lmstudio"
+  | "openai"
+  | "anthropic"
+  | "custom";
+
+export interface ModelProvider {
+  id: string;
+  type: ModelProviderType;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  available: boolean;
+  models?: string[];
+  config: Record<string, unknown>;
+  capabilities: string[];
+}
+
+export interface AIRuntimeCapabilities {
+  chat: boolean;
+  streaming: boolean;
+  toolCalling: boolean;
+  vision: boolean;
+  pdfInput: boolean;
+  embeddings: boolean;
+  structuredOutput: boolean;
+  reasoningControls: boolean;
+  contextCaching: boolean;
+  externalAgentLoop: boolean;
+}
+
+export interface AIRuntime {
+  id: string;
+  providerId: string;
+  name: string;
+  model?: string;
+  capabilities: AIRuntimeCapabilities;
+  config: Record<string, unknown>;
 }

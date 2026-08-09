@@ -2533,7 +2533,7 @@ Default conventions:
 ```text
 Daily/YYYY-MM-DD.md
 Daily/Weekly/YYYY-Www.md
-Inbox.md
+Inbox/
 ```
 
 Folder, filename format, template, week-start day, and capture target are configurable per vault
@@ -2560,7 +2560,7 @@ Indexing may temporarily make indicators incomplete, but direct date-note lookup
 ### 38.3 Quick Capture
 
 Quick Capture is a singleton desktop window with a configurable global shortcut. It targets an
-explicitly configured vault and either `Inbox.md` or today's daily note. Flux never silently
+explicitly configured vault and either a named Markdown file in the inbox folder or today's daily note. Flux never silently
 chooses another vault when the target is unavailable.
 
 Save pipeline:

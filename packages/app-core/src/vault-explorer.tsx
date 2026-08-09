@@ -12,8 +12,24 @@ import {
 } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
-import { ContextMenu, HoverCard } from "radix-ui";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@flux/shared-ui/components/tooltip";
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuPopup,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@flux/shared-ui/components/ui/context-menu";
+import {
+  Dialog,
+  DialogDescription,
+  DialogPopup,
+  DialogTitle,
+} from "@flux/shared-ui/components/ui/dialog";
+import {
+  PreviewCard,
+  PreviewCardPopup,
+  PreviewCardTrigger,
+} from "@flux/shared-ui/components/ui/preview-card";
 import ReadingView from "./reading-view";
 import { splitFrontmatter } from "./frontmatter";
 import type { DemoDocument } from "./markdown-editor";
@@ -39,11 +55,6 @@ interface VaultExplorerProps {
   onExpandFolder?: (path: string) => void;
   onSelectPath?: (path: string) => void;
 }
-
-const menuClass =
-  "z-[150] min-w-44 rounded-lg border bg-popover p-1 text-popover-foreground shadow-xl [border-color:var(--layout-separator)]";
-const itemClass =
-  "flex h-8 cursor-default select-none items-center rounded-md px-2 text-sm outline-none data-[highlighted]:bg-accent";
 
 function filePresentation(entry: FileEntry) {
   if (entry.kind === "directory") return { label: entry.name, badge: "" };
@@ -392,31 +403,19 @@ export function VaultExplorer({
 
     return (
       <div key={entry.path}>
-        <ContextMenu.Root>
-          <HoverCard.Root
-            open={preview?.path === entry.path}
-            onOpenChange={(open) => !open && hidePreview(entry.path)}
-          >
-            <Tooltip open={preview?.path === entry.path ? false : undefined}>
-              <ContextMenu.Trigger asChild>
-                <TooltipTrigger asChild>
-                  <HoverCard.Trigger asChild>{row}</HoverCard.Trigger>
-                </TooltipTrigger>
-              </ContextMenu.Trigger>
-              <TooltipContent side="right" sideOffset={8} className="max-w-72 items-start">
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">{entry.path}</span>
-                  <span className="mt-0.5 block text-[10px] text-muted-foreground">{metadata}</span>
-                </span>
-              </TooltipContent>
-            </Tooltip>
-            <HoverCard.Portal>
-              <HoverCard.Content
+        <ContextMenu>
+          <ContextMenuTrigger render={<div className="contents" />}>
+            <PreviewCard
+              open={preview?.path === entry.path}
+              onOpenChange={(open) => !open && hidePreview(entry.path)}
+            >
+              <PreviewCardTrigger render={row} />
+              <PreviewCardPopup
                 side="right"
                 align="start"
                 sideOffset={10}
                 collisionPadding={12}
-                className="z-[160] w-[30rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-2xl [border-color:var(--layout-separator)]"
+                className="z-[160] w-[30rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md p-0"
               >
                 <div className="grid grid-cols-[3px_minmax(0,1fr)] border-b [border-color:var(--layout-separator)]">
                   <span className="bg-primary/70" aria-hidden="true" />
@@ -447,58 +446,52 @@ export function VaultExplorer({
                     <p className="p-4 text-xs text-muted-foreground">Empty file</p>
                   )}
                 </div>
-              </HoverCard.Content>
-            </HoverCard.Portal>
-          </HoverCard.Root>
-          <ContextMenu.Portal>
-            <ContextMenu.Content className={menuClass}>
+              </PreviewCardPopup>
+            </PreviewCard>
+          </ContextMenuTrigger>
+            <ContextMenuPopup className="z-[150] min-w-44">
               {directory ? (
                 <>
-                  <ContextMenu.Item
-                    className={itemClass}
-                    onSelect={() => beginCreate("note", entry.path)}
+                  <ContextMenuItem
+                    onClick={() => beginCreate("note", entry.path)}
                   >
                     New note
-                  </ContextMenu.Item>
-                  <ContextMenu.Item
-                    className={itemClass}
-                    onSelect={() => beginCreate("folder", entry.path)}
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => beginCreate("folder", entry.path)}
                   >
                     New folder
-                  </ContextMenu.Item>
-                  <ContextMenu.Separator className="my-1 h-px bg-[var(--layout-separator)]" />
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
                 </>
               ) : null}
-              <ContextMenu.Item
-                className={itemClass}
-                onSelect={() => setDialog({ kind: "move", entry, value: "" })}
+              <ContextMenuItem
+                onClick={() => setDialog({ kind: "move", entry, value: "" })}
               >
                 Move {directory ? "folder" : "file"} to…
-              </ContextMenu.Item>
-              <ContextMenu.Item
-                className={itemClass}
-                onSelect={() => {
+              </ContextMenuItem>
+              <ContextMenuItem
+                onClick={() => {
                   cancelInlineEditRef.current = false;
                   setInlineEdit({ kind: "rename", entry, value: entry.name });
                 }}
               >
                 Rename…
-              </ContextMenu.Item>
-              <ContextMenu.Separator className="my-1 h-px bg-[var(--layout-separator)]" />
+              </ContextMenuItem>
+              <ContextMenuSeparator />
               {entry.path !== "archive" && !entry.path.startsWith("archive/") ? (
-                <ContextMenu.Item className={itemClass} onSelect={() => onArchive(entry.path)}>
+                <ContextMenuItem onClick={() => onArchive(entry.path)}>
                   Move to archive
-                </ContextMenu.Item>
+                </ContextMenuItem>
               ) : null}
-              <ContextMenu.Item
-                className={`${itemClass} text-destructive`}
-                onSelect={() => onDelete(entry.path)}
+              <ContextMenuItem
+                variant="destructive"
+                onClick={() => onDelete(entry.path)}
               >
                 Move to trash
-              </ContextMenu.Item>
-            </ContextMenu.Content>
-          </ContextMenu.Portal>
-        </ContextMenu.Root>
+              </ContextMenuItem>
+            </ContextMenuPopup>
+        </ContextMenu>
         {directory ? (
           <AnimatePresence initial={false}>
             {expanded ? (
@@ -628,11 +621,12 @@ export function VaultExplorer({
         {(children.get("") ?? []).map((entry) => renderEntry(entry, 0))}
       </div>
       {dialog ? (
-        <div className="fixed inset-0 z-[190] grid place-items-center bg-black/35 p-4">
-          <div className="w-full max-w-sm rounded-xl border bg-popover p-5 shadow-2xl [border-color:var(--layout-separator)]">
-            <label className="text-sm font-semibold" htmlFor="vault-operation-value">
-              Move to folder
-            </label>
+        <Dialog open onOpenChange={(open) => !open && setDialog(undefined)}>
+          <DialogPopup bottomStickOnMobile={false} showCloseButton={false} className="max-w-sm p-5">
+            <DialogTitle className="text-sm font-semibold">Move to folder</DialogTitle>
+            <DialogDescription className="sr-only">
+              Enter destination folder or leave blank for vault root.
+            </DialogDescription>
             <input
               id="vault-operation-value"
               autoFocus
@@ -660,8 +654,8 @@ export function VaultExplorer({
                 Move
               </button>
             </div>
-          </div>
-        </div>
+          </DialogPopup>
+        </Dialog>
       ) : null}
     </div>
   );

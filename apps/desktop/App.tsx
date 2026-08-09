@@ -26,6 +26,9 @@ const desktopRuntime: FluxRuntime = {
   setTheme: async (theme) => {
     await window.electronAPI?.setTheme(theme);
   },
+  setMenuBarIconEnabled: async (enabled) => {
+    await window.electronAPI?.setMenuBarIconEnabled(enabled);
+  },
   connect: async () => {
     if (!window.electronAPI) return "Electron bridge unavailable";
     const response = await window.electronAPI.ping();

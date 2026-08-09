@@ -5,7 +5,9 @@ import {
   globalShortcut,
   ipcMain,
   Menu,
+  nativeImage,
   nativeTheme,
+  Tray,
   type WebContents,
 } from "electron";
 import { autoUpdater } from "electron-updater";
@@ -16,6 +18,7 @@ import * as path from "path";
 
 let mainWindow: BrowserWindow | null = null;
 let quickCaptureWindow: BrowserWindow | null = null;
+let menuBarTray: Tray | null = null;
 let backendProcess: ChildProcess | null = null;
 const vaultEventStreams = new Map<string, AbortController>();
 const closeReadyWindows = new Set<number>();
@@ -293,7 +296,7 @@ function createWindow(targetUrl?: string) {
 
   if (process.platform === "darwin") {
     window.setWindowButtonVisibility(true);
-    window.setWindowButtonPosition({ x: 14, y: 18 });
+    window.setWindowButtonPosition({ x: 14, y: 16 });
   }
 
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -356,13 +359,16 @@ function showQuickCapture() {
   }
   const window = new BrowserWindow({
     width: 460,
-    height: 330,
+    height: 360,
     minWidth: 400,
-    minHeight: 280,
+    minHeight: 320,
     show: false,
     alwaysOnTop: true,
+    fullscreenable: false,
+    maximizable: false,
+    title: "Quick Capture",
     titleBarStyle: "hiddenInset",
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1a" : "#e8e8e8",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1c1d1a" : "#f5f5f2",
     webPreferences: {
       preload: path.join(currentDirectory, "preload/index.mjs"),
       contextIsolation: true,
@@ -370,6 +376,7 @@ function showQuickCapture() {
       sandbox: true,
     },
   });
+  if (process.platform === "darwin") window.setWindowButtonPosition({ x: 14, y: 14 });
   quickCaptureWindow = window;
   if (devServerUrl) {
     const url = new URL(devServerUrl);
@@ -386,12 +393,63 @@ function showQuickCapture() {
   });
 }
 
+function showMainWindow(command?: string) {
+  if (process.platform === "darwin") app.dock?.show();
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow();
+  const sendCommand = () => command && window.webContents.send("flux-command", command);
+  if (window.webContents.isLoadingMainFrame()) window.webContents.once("did-finish-load", sendCommand);
+  else sendCommand();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
 function dispatchCommand(command: string) {
-  (
-    BrowserWindow.getFocusedWindow() ??
-    mainWindow ??
-    BrowserWindow.getAllWindows().find((window) => !window.isDestroyed())
-  )?.webContents.send("flux-command", command);
+  showMainWindow(command);
+}
+
+function setMenuBarIconEnabled(enabled: boolean) {
+  if (process.platform !== "darwin") return;
+  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: enabled });
+  if (!enabled) {
+    menuBarTray?.destroy();
+    menuBarTray = null;
+    return;
+  }
+  if (menuBarTray) return;
+  const icon = nativeImage.createFromDataURL(
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAOUlEQVR4nGNgGOzgPxRTpJksQ9A1k2QILs1EGUJIM15DiNWM0xCKDaDYC1QJREKGkAQo0oxuyCAGAIXVU60eHgTUAAAAAElFTkSuQmCC"
+  );
+  icon.setTemplateImage(true);
+  menuBarTray = new Tray(icon);
+  menuBarTray.setToolTip("FLUX quick actions");
+  menuBarTray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "Quick Capture", accelerator: "Control+Option+Space", click: showQuickCapture },
+      { label: "Open Today’s Note", click: () => dispatchCommand("daily-today") },
+      { label: "Search Notes…", click: () => dispatchCommand("search") },
+      { type: "separator" },
+      { label: "Open FLUX", click: () => showMainWindow() },
+      { label: "Settings…", click: () => dispatchCommand("settings") },
+      { type: "separator" },
+      { role: "quit" },
+    ])
+  );
+}
+
+async function menuBarIconEnabled() {
+  try {
+    const response = await fetch(`${backendOrigin}/api/v1/app-settings`, {
+      headers: backendHeaders(),
+    });
+    if (!response.ok) return true;
+    const settings = (await response.json()) as Record<string, unknown>;
+    const fluxSettings = settings.fluxSettings as Record<string, unknown> | undefined;
+    const general = fluxSettings?.general as Record<string, unknown> | undefined;
+    return general?.showMenuBarIcon !== false;
+  } catch {
+    return true;
+  }
 }
 
 function installApplicationMenu() {
@@ -431,10 +489,14 @@ function installApplicationMenu() {
 }
 
 app.whenReady().then(async () => {
+  const openedAtLogin =
+    process.platform === "darwin" && app.isPackaged && app.getLoginItemSettings().wasOpenedAtLogin;
   backendStartup = ensureBackend();
-  createWindow();
+  if (openedAtLogin) app.dock?.hide();
+  else createWindow();
   await backendStartup;
   installApplicationMenu();
+  setMenuBarIconEnabled(await menuBarIconEnabled());
   globalShortcut.register("Control+Option+Space", showQuickCapture);
   backendHeartbeat = setInterval(() => void backendReady(), 30_000);
   backendHeartbeat.unref();
@@ -662,6 +724,11 @@ ipcMain.handle("set-native-theme", (_event, theme: unknown) => {
   }
 
   nativeTheme.themeSource = theme;
+});
+
+ipcMain.handle("set-menu-bar-icon-enabled", (_event, enabled: unknown) => {
+  if (typeof enabled !== "boolean") throw new TypeError("Invalid menu bar icon setting");
+  setMenuBarIconEnabled(enabled);
 });
 
 ipcMain.handle("open-window", (_event, target: unknown) => {

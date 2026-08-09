@@ -154,3 +154,51 @@ type ServerStatus struct {
 	VaultConfigured bool       `json:"vaultConfigured"`
 	OpenVault       *VaultInfo `json:"openVault"`
 }
+
+type ModelProviderType string
+
+const (
+	ModelProviderTypeCodex       ModelProviderType = "codex"
+	ModelProviderTypeCopilot     ModelProviderType = "copilot"
+	ModelProviderTypeOpenCode    ModelProviderType = "opencode"
+	ModelProviderTypeAntigravity ModelProviderType = "antigravity"
+	ModelProviderTypeOllama      ModelProviderType = "ollama"
+	ModelProviderTypeLMStudio    ModelProviderType = "lmstudio"
+	ModelProviderTypeOpenAI      ModelProviderType = "openai"
+	ModelProviderTypeAnthropic   ModelProviderType = "anthropic"
+	ModelProviderTypeCustom      ModelProviderType = "custom"
+)
+
+type ModelProvider struct {
+	ID           string                 `json:"id"`
+	Type         ModelProviderType      `json:"type"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description,omitempty"`
+	Enabled      bool                   `json:"enabled"`
+	Available    bool                   `json:"available"`
+	Models       []string               `json:"models,omitempty"`
+	Config       map[string]interface{} `json:"config"`
+	Capabilities []string               `json:"capabilities"`
+}
+
+type AIRuntimeCapabilities struct {
+	Chat              bool `json:"chat"`
+	Streaming         bool `json:"streaming"`
+	ToolCalling       bool `json:"toolCalling"`
+	Vision            bool `json:"vision"`
+	PDFInput          bool `json:"pdfInput"`
+	Embeddings        bool `json:"embeddings"`
+	StructuredOutput  bool `json:"structuredOutput"`
+	ReasoningControls bool `json:"reasoningControls"`
+	ContextCaching    bool `json:"contextCaching"`
+	ExternalAgentLoop bool `json:"externalAgentLoop"`
+}
+
+type AIRuntime struct {
+	ID           string                 `json:"id"`
+	ProviderID   string                 `json:"providerId"`
+	Name         string                 `json:"name"`
+	Model        string                 `json:"model,omitempty"`
+	Capabilities AIRuntimeCapabilities  `json:"capabilities"`
+	Config       map[string]interface{} `json:"config"`
+}

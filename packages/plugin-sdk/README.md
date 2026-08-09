@@ -15,7 +15,7 @@ export default definePlugin({
 
 Declare every used capability in `flux.plugin.json`. Runtime approval remains authoritative.
 
-Views can request one safe host surface and built-in icon:
+Views can request one safe host surface and either a built-in icon or packaged SVG:
 
 ```json
 {
@@ -25,7 +25,8 @@ Views can request one safe host surface and built-in icon:
       "title": "Example",
       "entry": "dist/view.html",
       "location": "right-sidebar",
-      "icon": "panel-right"
+      "icon": "panel-right",
+      "iconPath": "dist/icon.svg"
     }]
   }
 }
@@ -34,5 +35,6 @@ Views can request one safe host surface and built-in icon:
 `location` supports `modal`, `left-sidebar`, `right-sidebar`, or `workspace`; omission
 selects the plugin in Flux's left sidebar, like Files or Search. Modal placement must
 be explicit. `icon` supports `puzzle`, `sparkles`, `panel-left`,
-`panel-right`, `layout-dashboard`, `calendar`, or `list`. Flux renders icons itself;
-plugins cannot inject SVG or host DOM.
+`panel-right`, `layout-dashboard`, `calendar`, `list`, or `git-branch`. `iconPath` takes
+precedence, must point to a packaged SVG no larger than 64 KiB, and is rendered only as
+an image; plugins still cannot inject host DOM.

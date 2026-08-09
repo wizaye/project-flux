@@ -10,6 +10,7 @@ export interface GeneralSettings {
   defaultStartupPage: "last-active" | "files" | "graph" | "daily-note";
   showInlineTitle: boolean;
   showTabBar: boolean;
+  showMenuBarIcon: boolean;
 }
 
 export interface EditorSettings {
@@ -56,6 +57,7 @@ export const DEFAULT_SETTINGS: FluxSettings = {
     defaultStartupPage: "last-active",
     showInlineTitle: true,
     showTabBar: true,
+    showMenuBarIcon: true,
   },
   editor: {
     livePreview: true,

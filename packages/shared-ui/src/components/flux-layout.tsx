@@ -39,7 +39,6 @@ export interface FluxLayoutProps extends Omit<HTMLAttributes<HTMLDivElement>, "t
   windowControlsInset?: number;
   leftSidebarOptions?: FluxSidebarOptions;
   rightSidebarOptions?: FluxSidebarOptions;
-  resizeIndicatorClassName?: string;
   onLayoutChange?: (state: FluxLayoutState) => void;
   layoutState?: FluxLayoutState;
   mainExtendsIntoTitlebar?: boolean;
@@ -60,7 +59,6 @@ interface ResizeHandleProps {
   collapsePressure: number;
   onResize: (side: FluxSidebarSide, width: number) => void;
   onDragChange: (side: FluxSidebarSide | null) => void;
-  indicatorClassName?: string;
 }
 
 function ResizeHandle({
@@ -72,7 +70,6 @@ function ResizeHandle({
   collapsePressure,
   onResize,
   onDragChange,
-  indicatorClassName,
 }: ResizeHandleProps) {
   const dragStart = useRef<{ pointerX: number; width: number } | null>(null);
 
@@ -114,7 +111,7 @@ function ResizeHandle({
   };
 
   return (
-    <m.div
+    <div
       role="separator"
       tabIndex={0}
       aria-controls={panelId}
@@ -124,7 +121,7 @@ function ResizeHandle({
       aria-valuemax={maxWidth}
       aria-valuenow={Math.round(width)}
       className={cn(
-        "relative z-40 -ml-1 h-full w-2 touch-none outline-none",
+        "relative z-40 -ml-1 h-full w-2 touch-none outline-none focus-visible:bg-foreground/10",
         side === "left" ? "col-start-3" : "col-start-5"
       )}
       onKeyDown={resizeByKey}
@@ -132,25 +129,9 @@ function ResizeHandle({
       onPointerMove={handlePointerMove}
       onPointerUp={stopDragging}
       onPointerCancel={stopDragging}
-      initial="idle"
-      whileHover="active"
-      whileFocus="active"
     >
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--layout-separator)]"
-      />
-      <m.span
-        aria-hidden="true"
-        className={cn(
-          "pointer-events-none absolute -top-11 bottom-0 left-1/2 w-px -translate-x-1/2 bg-foreground",
-          indicatorClassName
-        )}
-        variants={{ idle: { opacity: 0 }, active: { opacity: 1 } }}
-        transition={{ duration: 0.12 }}
-      />
       <span className="absolute inset-y-0 -left-1.5 -right-1.5 cursor-col-resize" />
-    </m.div>
+    </div>
   );
 }
 
@@ -224,7 +205,6 @@ export function FluxLayout({
   windowControlsInset = 72,
   leftSidebarOptions,
   rightSidebarOptions,
-  resizeIndicatorClassName,
   onLayoutChange,
   layoutState,
   mainExtendsIntoTitlebar = false,
@@ -268,9 +248,12 @@ export function FluxLayout({
   const rightFootprint = rightVisible ? state.right.width : 0;
   const tabRailLeft = Math.max(leftFootprint, windowControlsInset + 44);
   const rightChromeWidth = Math.max(rightFootprint, hasRightSidebar ? 44 : 0);
+  const collapsedLeftToggleX = windowControlsInset
+    ? windowControlsInset + 4
+    : Math.max(0, (railWidth - 32) / 2);
   const leftToggleX = leftVisible
     ? Math.max(windowControlsInset + 4, leftFootprint - 36)
-    : windowControlsInset + 4;
+    : collapsedLeftToggleX;
   // Splitter keeps zero layout width; handle overflows around its hairline.
   const chromeColor = windowActive ? "var(--window-chrome-active)" : "var(--sidebar)";
   const contentColumns = [
@@ -295,7 +278,7 @@ export function FluxLayout({
   return (
     <div
       className={cn(
-        "flux-layout-root group/layout relative grid h-svh min-h-0 w-full grid-rows-[44px_minmax(0,1fr)_28px] overflow-hidden bg-background text-foreground",
+        "flux-layout-root group/layout relative grid h-svh min-h-0 w-full grid-rows-[44px_minmax(0,1fr)_28px] overflow-hidden bg-[var(--window-well)] text-foreground",
         resizingSide && "cursor-col-resize select-none [&_iframe]:pointer-events-none",
         className
       )}
@@ -307,10 +290,10 @@ export function FluxLayout({
         className="flux-window-drag relative min-w-0 text-sidebar-foreground"
         style={{ backgroundColor: chromeColor }}
       >
-        <div className="absolute inset-y-0 left-0 z-20 flex min-w-0 translate-y-1 items-center pl-1">
+        <div className="absolute inset-y-0 left-0 z-20 flex min-w-0 items-center pl-1">
           <div
             className="shrink-0"
-            style={{ width: Math.max(0, windowControlsInset - 4) }}
+            style={{ width: Math.max(0, Math.max(windowControlsInset, railWidth) - 4) }}
             aria-hidden="true"
           />
           <m.div
@@ -338,7 +321,7 @@ export function FluxLayout({
 
         {hasLeftSidebar ? (
           <m.div
-            className="absolute inset-y-0 z-30 flex translate-y-1 items-center"
+            className="absolute inset-y-0 z-30 flex items-center"
             initial={false}
             animate={{ left: leftToggleX }}
             transition={layoutTransition}
@@ -373,7 +356,7 @@ export function FluxLayout({
           transition={layoutTransition}
           style={{ backgroundColor: chromeColor }}
         >
-          <div className="absolute inset-y-0 left-2 flex min-w-0 translate-y-1 items-center gap-1">
+          <div className="absolute inset-y-0 left-2 flex min-w-0 items-center gap-1">
             <div
               className={cn(
                 "flux-window-no-drag flex min-w-0 items-center gap-0.5",
@@ -390,7 +373,7 @@ export function FluxLayout({
             ) : null}
           </div>
           {hasRightSidebar ? (
-            <div className="absolute inset-y-0 right-1 flex translate-y-1 items-center">
+            <div className="absolute inset-y-0 right-1 flex items-center">
               <SidebarToggle
                 side="right"
                 collapsed={!rightVisible}
@@ -434,7 +417,7 @@ export function FluxLayout({
             className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[var(--layout-separator)]"
           />
         ) : null}
-        <aside className="col-start-1 min-h-0 overflow-hidden border-r bg-sidebar text-sidebar-foreground [border-color:var(--layout-separator)]">
+        <aside className="col-start-1 min-h-0 overflow-hidden bg-transparent text-sidebar-foreground">
           {stickySidebar}
         </aside>
 
@@ -444,7 +427,7 @@ export function FluxLayout({
           inert={!leftVisible}
           aria-hidden={!leftVisible}
           className={cn(
-            "col-start-2 min-h-0 overflow-hidden bg-sidebar text-sidebar-foreground",
+            "flux-surface col-start-2 m-1 min-h-0 overflow-hidden rounded-lg bg-sidebar text-sidebar-foreground",
             !windowActive &&
               "relative before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-20 before:h-px before:bg-[var(--layout-separator)]",
             !leftVisible && "pointer-events-none"
@@ -465,13 +448,12 @@ export function FluxLayout({
             collapsePressure={constraints.left.collapsePressure}
             onResize={resize}
             onDragChange={setResizingSide}
-            indicatorClassName={resizeIndicatorClassName}
           />
         ) : (
           <div className="col-start-3" />
         )}
 
-        <main className="col-start-4 min-h-0 min-w-0 overflow-auto bg-background">
+        <main className="flux-surface col-start-4 m-1 min-h-0 min-w-0 overflow-auto rounded-lg bg-background">
           {mainExtendsIntoTitlebar ? null : main}
         </main>
 
@@ -485,7 +467,6 @@ export function FluxLayout({
             collapsePressure={constraints.right.collapsePressure}
             onResize={resize}
             onDragChange={setResizingSide}
-            indicatorClassName={resizeIndicatorClassName}
           />
         ) : (
           <div className="col-start-5" />
@@ -496,7 +477,7 @@ export function FluxLayout({
           inert={!rightVisible}
           aria-hidden={!rightVisible}
           className={cn(
-            "col-start-6 min-h-0 overflow-hidden bg-sidebar text-sidebar-foreground",
+            "flux-surface col-start-6 m-1 min-h-0 overflow-hidden rounded-lg bg-sidebar text-sidebar-foreground",
             !windowActive &&
               "relative before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-20 before:h-px before:bg-[var(--layout-separator)]",
             !rightVisible && "pointer-events-none"
@@ -511,7 +492,7 @@ export function FluxLayout({
 
       {mainExtendsIntoTitlebar ? (
         <m.main
-          className="absolute bottom-7 top-0 z-10 min-h-0 min-w-0 overflow-hidden bg-background"
+          className="absolute bottom-7 top-0 z-10 min-h-0 min-w-0 overflow-hidden bg-transparent"
           initial={false}
           animate={{ left: leftFootprint, right: rightFootprint }}
           transition={layoutTransition}
@@ -520,7 +501,10 @@ export function FluxLayout({
         </m.main>
       ) : null}
 
-      <footer className="relative z-30 min-w-0 border-t bg-sidebar px-2 text-xs text-muted-foreground [border-color:var(--layout-separator)]">
+      <footer
+        className="relative z-30 min-w-0 px-2 text-xs text-muted-foreground"
+        style={{ backgroundColor: chromeColor }}
+      >
         {footer}
       </footer>
     </div>

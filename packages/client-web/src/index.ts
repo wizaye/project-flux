@@ -143,6 +143,33 @@ export class WebFluxClient implements FluxClient {
     });
   }
 
+  listModelProviders() {
+    return this.request<import("@flux/bridge-contract").ModelProvider[]>("/model-providers");
+  }
+
+  getModelProvider(providerId: string) {
+    return this.request<import("@flux/bridge-contract").ModelProvider>(
+      `/model-providers/${encodeURIComponent(providerId)}`
+    );
+  }
+
+  updateModelProvider(providerId: string, config: Record<string, unknown>) {
+    return this.request<void>(`/model-providers/${encodeURIComponent(providerId)}`, {
+      method: "PUT",
+      body: JSON.stringify(config),
+    });
+  }
+
+  listAIRuntimes() {
+    return this.request<import("@flux/bridge-contract").AIRuntime[]>("/ai-runtimes");
+  }
+
+  getAIRuntime(runtimeId: string) {
+    return this.request<import("@flux/bridge-contract").AIRuntime>(
+      `/ai-runtimes/${encodeURIComponent(runtimeId)}`
+    );
+  }
+
   listPlugins() {
     return this.request<PluginCatalogEntry[]>("/plugins");
   }
@@ -173,6 +200,18 @@ export class WebFluxClient implements FluxClient {
     return this.request<void>(
       `/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/activate`,
       { method: "POST" }
+    );
+  }
+
+  approvePluginUpdate(
+    vaultId: string,
+    pluginId: string,
+    version: string,
+    grantedPermissions: string[]
+  ) {
+    return this.request<void>(
+      `/vaults/${encodeURIComponent(vaultId)}/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}/approve`,
+      { method: "POST", body: JSON.stringify({ grantedPermissions }) }
     );
   }
 

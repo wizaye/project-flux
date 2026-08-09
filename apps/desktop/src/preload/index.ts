@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   getPerformanceStats: () => ipcRenderer.invoke("get-performance-stats"),
   setTheme: (theme: "dark" | "light" | "system") => ipcRenderer.invoke("set-native-theme", theme),
+  setMenuBarIconEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke("set-menu-bar-icon-enabled", enabled),
   openWindow: (url: string) => ipcRenderer.invoke("open-window", url),
   onBeforeClose: (handler: () => Promise<void>) => {
     const listener = () => {

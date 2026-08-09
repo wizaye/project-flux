@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { Dialog } from "radix-ui";
+import {
+  Dialog,
+  DialogClose,
+  DialogPopup,
+  DialogTitle,
+} from "@flux/shared-ui/components/ui/dialog";
 import {
   Blocks,
   CalendarDays,
@@ -51,6 +56,7 @@ interface SettingsDialogProps {
   vaultId?: string;
   onVaultConfigChange?: () => void;
   getMCPServerCommand?: () => Promise<{ command: string; args: string[] }>;
+  onMenuBarIconChange?: (enabled: boolean) => void;
 }
 
 function SettingRow({
@@ -228,9 +234,10 @@ function SettingsNav({
 
 interface GeneralPageProps {
   vaultName: string;
+  onMenuBarIconChange?: (enabled: boolean) => void;
 }
 
-function GeneralPage({ vaultName }: GeneralPageProps) {
+function GeneralPage({ vaultName, onMenuBarIconChange }: GeneralPageProps) {
   const { settings, updateSettings } = useFluxSettings();
   const gen = settings.general;
 
@@ -249,6 +256,24 @@ function GeneralPage({ vaultName }: GeneralPageProps) {
             {vaultName || "FLUX Vault"}
           </span>
         </SettingRow>
+        {onMenuBarIconChange ? (
+          <>
+            <SettingDivider />
+            <SettingRow
+              label="Show in menu bar"
+              description="Launch FLUX in background at login and keep quick actions available with no window open."
+            >
+              <Toggle
+                checked={gen.showMenuBarIcon}
+                onChange={(enabled) => {
+                  updateGeneral("showMenuBarIcon", enabled);
+                  onMenuBarIconChange(enabled);
+                }}
+                label="Show FLUX in menu bar"
+              />
+            </SettingRow>
+          </>
+        ) : null}
         <SettingDivider />
 
         <SettingRow label="Launch behaviour" description="Choose what FLUX opens when launching.">
@@ -926,7 +951,6 @@ function CommunityPluginsPage({ onOpenPlugins }: { onOpenPlugins: () => void }) 
 /* ------------------------------------------------------------------ */
 
 const pageComponents: Partial<Record<SettingsPage, React.ComponentType<{ vaultName: string }>>> = {
-  general: GeneralPage,
   editor: EditorPage,
   appearance: AppearancePage,
   keychain: KeychainPage,
@@ -936,7 +960,7 @@ const pageComponents: Partial<Record<SettingsPage, React.ComponentType<{ vaultNa
 const dailyConfigDefaults = {
   dailyFolder: "Daily",
   weeklyFolder: "Daily/Weekly",
-  inboxPath: "Inbox.md",
+  inboxPath: "Inbox",
   dailyFormat: "YYYY-MM-DD",
   weeklyFormat: "GGGG-[W]WW",
   dailyTemplate: "",
@@ -973,7 +997,7 @@ function DailyNotesPage({
   const fields: Array<[keyof typeof dailyConfigDefaults, string, string]> = [
     ["dailyFolder", "Daily note folder", "Daily"],
     ["weeklyFolder", "Weekly note folder", "Daily/Weekly"],
-    ["inboxPath", "Quick Capture inbox", "Inbox.md"],
+    ["inboxPath", "Quick Capture folder", "Inbox"],
     ["dailyFormat", "Daily filename format", "YYYY-MM-DD"],
     ["weeklyFormat", "Weekly filename format", "GGGG-[W]WW"],
     ["dailyTemplate", "Daily template", "Templates/Daily.md"],
@@ -1202,22 +1226,23 @@ export function SettingsDialog({
   vaultId,
   onVaultConfigChange,
   getMCPServerCommand,
+  onMenuBarIconChange,
 }: SettingsDialogProps) {
   const [activePage, setActivePage] = useState<SettingsPage>("general");
   const ActivePageComponent = pageComponents[activePage] ?? GeneralPage;
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[200] bg-black/50" />
-        <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-[201] flex h-[min(680px,calc(100vh-4rem))] w-[min(900px,calc(100vw-4rem))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-2xl [border-color:var(--layout-separator)]"
+    <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogPopup
+          bottomStickOnMobile={false}
+          showCloseButton={false}
+          className="h-[min(680px,calc(100vh-4rem))] w-[min(900px,calc(100vw-4rem))] max-w-none flex-row overflow-hidden rounded-xl"
           aria-describedby={undefined}
         >
-          <Dialog.Title className="sr-only">Settings</Dialog.Title>
-          <Dialog.Close className="absolute right-2 top-2 z-10 grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+          <DialogTitle className="sr-only">Settings</DialogTitle>
+          <DialogClose className="absolute right-2 top-2 z-10 grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
             <X className="size-4" />
-          </Dialog.Close>
+          </DialogClose>
 
           {/* Left navigation */}
           <div className="flex w-52 shrink-0 flex-col border-r bg-sidebar p-3 [border-color:var(--layout-separator)]">
@@ -1233,7 +1258,7 @@ export function SettingsDialog({
           </div>
 
           {/* Right content panel */}
-          <div className="flex-1 overflow-y-auto p-8">
+          <div className="flux-editor-scroll flex-1 overflow-y-auto p-8">
             {activePage === "community-plugins" ? (
               <CommunityPluginsPage onOpenPlugins={onOpenPlugins} />
             ) : activePage === "mcp" ? (
@@ -1248,12 +1273,16 @@ export function SettingsDialog({
                 vaultId={vaultId}
                 onSaved={onVaultConfigChange}
               />
+            ) : activePage === "general" ? (
+              <GeneralPage
+                vaultName={vaultName}
+                onMenuBarIconChange={onMenuBarIconChange}
+              />
             ) : (
               <ActivePageComponent vaultName={vaultName} />
             )}
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </DialogPopup>
+    </Dialog>
   );
 }

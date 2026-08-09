@@ -116,9 +116,22 @@ function validateContributions(manifest: JsonObject, pluginId: string): void {
         "layout-dashboard",
         "calendar",
         "list",
+        "git-branch",
       ]).has(String(view.icon))
     ) {
       throw new Error(`${label}.icon is not a supported built-in icon`);
+    }
+    if (view.iconPath !== undefined) {
+      const iconPath = text(view.iconPath, `${label}.iconPath`);
+      if (
+        iconPath.includes("\\") ||
+        posix.isAbsolute(iconPath) ||
+        posix.normalize(iconPath) !== iconPath ||
+        iconPath.startsWith("../") ||
+        !iconPath.toLowerCase().endsWith(".svg")
+      ) {
+        throw new Error(`${label}.iconPath must be a clean relative .svg path`);
+      }
     }
   }
   for (const [index, setting] of contributionList(
@@ -346,6 +359,15 @@ function collectFiles(root: string, manifest: JsonObject): Map<string, Buffer> {
   add(join(root, "dist"));
   const entry = safeEntry(manifest.entry);
   if (!files.has(entry)) throw new Error(`entry does not exist: ${entry}`);
+  const contributes = manifest.contributes as JsonObject | undefined;
+  for (const view of contributionList(contributes?.views ?? [], "contributes.views")) {
+    if (view.iconPath === undefined) continue;
+    const iconPath = text(view.iconPath, "view.iconPath");
+    if (!files.has(iconPath)) throw new Error(`view icon does not exist: ${iconPath}`);
+    if (files.get(iconPath)!.length > 64 * 1024) {
+      throw new Error(`view icon exceeds 64 KiB: ${iconPath}`);
+    }
+  }
   if (files.size > 1_000) throw new Error("package exceeds 1000 files");
   const size = [...files.values()].reduce((total, data) => total + data.length, 0);
   if (size > 25 * 1024 * 1024) throw new Error("package exceeds 25 MiB");

@@ -10,22 +10,26 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	application "github.com/flux-pkm/server/internal/app"
 	"github.com/flux-pkm/server/internal/appdata"
 	"github.com/flux-pkm/server/internal/domain"
 	"github.com/flux-pkm/server/internal/files"
+	gitadapter "github.com/flux-pkm/server/internal/git"
+	"github.com/flux-pkm/server/internal/modelproviders"
 	"github.com/flux-pkm/server/internal/plugins"
 	"github.com/flux-pkm/server/internal/vault"
 	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
-	app          *application.Service
-	appData      *appdata.Store
-	desktopToken string
-	plugins      *plugins.Manager
+	app            *application.Service
+	appData        *appdata.Store
+	desktopToken   string
+	plugins        *plugins.Manager
+	modelProviders *modelproviders.Service
 }
 
 const maxRequestBodyBytes = 50 << 20
@@ -42,6 +46,10 @@ func WithDesktopToken(token string) RouteOption {
 
 func WithPlugins(manager *plugins.Manager) RouteOption {
 	return func(handler *Handler) { handler.plugins = manager }
+}
+
+func WithModelProviders(service *modelproviders.Service) RouteOption {
+	return func(handler *Handler) { handler.modelProviders = service }
 }
 
 func RegisterRoutes(router *gin.Engine, app *application.Service, options ...RouteOption) {
@@ -68,6 +76,7 @@ func RegisterRoutes(router *gin.Engine, app *application.Service, options ...Rou
 	v1.POST("/plugins/install", handler.installPlugin)
 	v1.POST("/plugins/marketplace/:pluginId/install", handler.installMarketplacePlugin)
 	v1.POST("/plugins/:pluginId/:version/activate", handler.activatePlugin)
+	v1.POST("/vaults/:vaultId/plugins/:pluginId/:version/approve", handler.approvePluginUpdate)
 	v1.POST("/plugins/:pluginId/rollback", handler.rollbackPlugin)
 	v1.DELETE("/plugins/:pluginId/:version", handler.uninstallPlugin)
 	v1.POST("/vaults/open", handler.openVault)
@@ -107,6 +116,11 @@ func RegisterRoutes(router *gin.Engine, app *application.Service, options ...Rou
 	v1.GET("/vaults/:vaultId/trash", handler.listTrash)
 	v1.DELETE("/vaults/:vaultId/trash", handler.purgeTrash)
 	v1.DELETE("/vaults/:vaultId/trash/:trashId", handler.permanentlyDelete)
+	v1.GET("/model-providers", handler.listModelProviders)
+	v1.GET("/model-providers/:providerId", handler.getModelProvider)
+	v1.PUT("/model-providers/:providerId", handler.updateModelProvider)
+	v1.GET("/ai-runtimes", handler.listAIRuntimes)
+	v1.GET("/ai-runtimes/:runtimeId", handler.getAIRuntime)
 }
 
 func (h *Handler) vaultConfig(c *gin.Context) {
@@ -304,6 +318,22 @@ func (h *Handler) activatePlugin(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *Handler) approvePluginUpdate(c *gin.Context) {
+	if !h.requirePlugins(c) {
+		return
+	}
+	var request enablePluginRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeRequestError(c, err)
+		return
+	}
+	if err := h.plugins.ApproveUpdateForVault(c.Param("vaultId"), c.Param("pluginId"), c.Param("version"), request.GrantedPermissions); err != nil {
+		writePluginError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (h *Handler) rollbackPlugin(c *gin.Context) {
 	if !h.requirePlugins(c) {
 		return
@@ -466,6 +496,186 @@ func (h *Handler) invokePluginCapability(c *gin.Context) {
 		}
 		results, err := h.app.Search(vaultID, input.Query, input.Limit)
 		writePluginResult(c, gin.H{"results": results}, err)
+	case "git.status":
+		result, err := h.app.GitStatus(c.Request.Context(), vaultID)
+		writePluginResult(c, result, err)
+	case "git.init":
+		err := h.app.EnableGit(c.Request.Context(), vaultID)
+		writePluginResult(c, gin.H{"enabled": err == nil}, err)
+	case "git.stage", "git.unstage":
+		var input struct {
+			Paths []string `json:"paths"`
+		}
+		if json.Unmarshal(request.Input, &input) != nil {
+			writeRequestError(c, errors.New("invalid input"))
+			return
+		}
+		var err error
+		if capabilityName == "git.stage" {
+			err = h.app.StageGit(c.Request.Context(), vaultID, input.Paths)
+		} else {
+			err = h.app.UnstageGit(c.Request.Context(), vaultID, input.Paths)
+		}
+		writePluginResult(c, gin.H{"updated": err == nil}, err)
+	case "git.commit":
+		var input struct {
+			Message string   `json:"message"`
+			Paths   []string `json:"paths"`
+		}
+		if json.Unmarshal(request.Input, &input) != nil || strings.TrimSpace(input.Message) == "" {
+			writeRequestError(c, errors.New("invalid input"))
+			return
+		}
+		err := h.app.CommitGit(c.Request.Context(), vaultID, input.Message, input.Paths)
+		writePluginResult(c, gin.H{"committed": err == nil}, err)
+	case "git.pull", "git.push", "git.fetch":
+		var err error
+		switch capabilityName {
+		case "git.pull":
+			err = h.app.PullGit(c.Request.Context(), vaultID)
+		case "git.push":
+			var input struct {
+				Remote string `json:"remote"`
+			}
+			if json.Unmarshal(request.Input, &input) != nil {
+				writeRequestError(c, errors.New("invalid input"))
+				return
+			}
+			err = h.app.PushGitTo(c.Request.Context(), vaultID, input.Remote)
+		default:
+			err = h.app.FetchGit(c.Request.Context(), vaultID)
+		}
+		writePluginResult(c, gin.H{"updated": err == nil}, err)
+	case "git.remote.set":
+		var input struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		}
+		if json.Unmarshal(request.Input, &input) != nil || strings.TrimSpace(input.URL) == "" {
+			writeRequestError(c, errors.New("invalid input"))
+			return
+		}
+		if strings.TrimSpace(input.Name) == "" {
+			input.Name = "origin"
+		}
+		err := h.app.SetGitRemote(c.Request.Context(), vaultID, input.Name, input.URL)
+		writePluginResult(c, gin.H{"updated": err == nil}, err)
+	case "git.remote.remove":
+		var input struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(request.Input, &input) != nil {
+			writeRequestError(c, errors.New("invalid input"))
+			return
+		}
+		if strings.TrimSpace(input.Name) == "" {
+			input.Name = "origin"
+		}
+		err := h.app.RemoveGitRemote(c.Request.Context(), vaultID, input.Name)
+		writePluginResult(c, gin.H{"updated": err == nil}, err)
+	case "git.diff":
+		var input struct {
+			Path   string `json:"path"`
+			Staged bool   `json:"staged"`
+		}
+		if json.Unmarshal(request.Input, &input) != nil || strings.TrimSpace(input.Path) == "" {
+			writeRequestError(c, errors.New("invalid input"))
+			return
+		}
+		result, err := h.app.GitDiff(c.Request.Context(), vaultID, input.Path, input.Staged)
+		writePluginResult(c, result, err)
+	case "git.discard":
+		var input struct {
+			Paths []string `json:"paths"`
+		}
+		if json.Unmarshal(request.Input, &input) != nil || len(input.Paths) == 0 {
+			writeRequestError(c, errors.New("invalid input"))
+			return
+		}
+		err := h.app.DiscardGit(c.Request.Context(), vaultID, input.Paths)
+		writePluginResult(c, gin.H{"updated": err == nil}, err)
+	case "git.branches":
+		result, err := h.app.GitBranches(c.Request.Context(), vaultID)
+		writePluginResult(c, gin.H{"branches": result}, err)
+	case "git.checkout", "git.branch.create":
+		var input struct {
+			Branch string `json:"branch"`
+		}
+		if json.Unmarshal(request.Input, &input) != nil || strings.TrimSpace(input.Branch) == "" {
+			writeRequestError(c, errors.New("invalid input"))
+			return
+		}
+		err := h.app.CheckoutGit(c.Request.Context(), vaultID, input.Branch, capabilityName == "git.branch.create")
+		writePluginResult(c, gin.H{"updated": err == nil}, err)
+	case "git.history":
+		var input struct {
+			Limit int `json:"limit"`
+		}
+		if json.Unmarshal(request.Input, &input) != nil {
+			writeRequestError(c, errors.New("invalid input"))
+			return
+		}
+		result, err := h.app.GitHistory(c.Request.Context(), vaultID, input.Limit)
+		writePluginResult(c, gin.H{"commits": result}, err)
+	case "git.resolve":
+		var input struct{ Path, Strategy string }
+		if json.Unmarshal(request.Input, &input) != nil || strings.TrimSpace(input.Path) == "" {
+			writeRequestError(c, errors.New("invalid input"))
+			return
+		}
+		err := h.app.ResolveGit(c.Request.Context(), vaultID, input.Path, input.Strategy)
+		writePluginResult(c, gin.H{"updated": err == nil}, err)
+	case "ai.providers":
+		if h.modelProviders == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": "ai_unavailable", "error": "AI provider service is unavailable"})
+			return
+		}
+		writePluginResult(c, h.modelProviders.ListProviders(), nil)
+	case "ai.chat":
+		if h.modelProviders == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": "ai_unavailable", "error": "AI provider service is unavailable"})
+			return
+		}
+		var input struct {
+			Provider string                       `json:"provider"`
+			Model    string                       `json:"model"`
+			Messages []modelproviders.ChatMessage `json:"messages"`
+			Stream   bool                         `json:"stream"`
+			StreamID string                       `json:"streamId"`
+		}
+		if json.Unmarshal(request.Input, &input) != nil {
+			writeRequestError(c, errors.New("invalid input"))
+			return
+		}
+		if input.StreamID != "" {
+			stream, err := h.modelProviders.PollChat(input.StreamID)
+			if err != nil {
+				writeRequestError(c, err)
+				return
+			}
+			writePluginResult(c, stream, nil)
+			return
+		}
+		if strings.TrimSpace(input.Provider) == "" || len(input.Messages) == 0 {
+			writeRequestError(c, errors.New("invalid input"))
+			return
+		}
+		workspace, pathErr := h.app.VaultPath(vaultID)
+		if pathErr != nil {
+			writeError(c, pathErr)
+			return
+		}
+		if input.Stream {
+			streamID := h.modelProviders.StartChat(workspace, input.Provider, input.Model, input.Messages)
+			writePluginResult(c, gin.H{"streamId": streamID, "reply": "", "done": false}, nil)
+			return
+		}
+		reply, err := h.modelProviders.Chat(c.Request.Context(), workspace, input.Provider, input.Model, input.Messages, nil)
+		if err != nil {
+			writeRequestError(c, err)
+			return
+		}
+		writePluginResult(c, gin.H{"reply": reply}, nil)
 	default:
 		c.JSON(http.StatusNotImplemented, gin.H{"code": "plugin_capability_unavailable", "error": "capability is not implemented"})
 	}
@@ -1113,6 +1323,79 @@ func (h *Handler) purgeTrash(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *Handler) listModelProviders(c *gin.Context) {
+	if h.modelProviders == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model providers service not available"})
+		return
+	}
+	providers := h.modelProviders.ListProviders()
+	c.JSON(http.StatusOK, providers)
+}
+
+func (h *Handler) getModelProvider(c *gin.Context) {
+	if h.modelProviders == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model providers service not available"})
+		return
+	}
+	provider, err := h.modelProviders.GetProvider(c.Param("providerId"))
+	if err != nil {
+		if errors.Is(err, modelproviders.ErrProviderNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "provider_not_found", "error": err.Error()})
+		} else {
+			writeError(c, err)
+		}
+		return
+	}
+	c.JSON(http.StatusOK, provider)
+}
+
+func (h *Handler) updateModelProvider(c *gin.Context) {
+	if h.modelProviders == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model providers service not available"})
+		return
+	}
+	var config map[string]interface{}
+	if err := c.ShouldBindJSON(&config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "invalid_config", "error": err.Error()})
+		return
+	}
+	if err := h.modelProviders.UpdateProvider(c.Param("providerId"), config); err != nil {
+		if errors.Is(err, modelproviders.ErrProviderNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "provider_not_found", "error": err.Error()})
+		} else {
+			writeError(c, err)
+		}
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) listAIRuntimes(c *gin.Context) {
+	if h.modelProviders == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model providers service not available"})
+		return
+	}
+	runtimes := h.modelProviders.ListRuntimes()
+	c.JSON(http.StatusOK, runtimes)
+}
+
+func (h *Handler) getAIRuntime(c *gin.Context) {
+	if h.modelProviders == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model providers service not available"})
+		return
+	}
+	runtime, err := h.modelProviders.GetRuntime(c.Param("runtimeId"))
+	if err != nil {
+		if errors.Is(err, modelproviders.ErrProviderNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "runtime_not_found", "error": err.Error()})
+		} else {
+			writeError(c, err)
+		}
+		return
+	}
+	c.JSON(http.StatusOK, runtime)
+}
+
 func writeError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, vault.ErrNotConfigured):
@@ -1135,7 +1418,14 @@ func writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": "invalid_retention", "error": err.Error()})
 	case errors.Is(err, application.ErrInvalidVaultPlan):
 		c.JSON(http.StatusBadRequest, gin.H{"code": "invalid_vault_plan", "error": err.Error()})
+	case errors.Is(err, gitadapter.ErrNotRepository), errors.Is(err, gitadapter.ErrMessageNeeded), errors.Is(err, gitadapter.ErrInvalidPath):
+		c.JSON(http.StatusBadRequest, gin.H{"code": "git_request_failed", "error": err.Error()})
 	default:
+		var gitError *gitadapter.CommandError
+		if errors.As(err, &gitError) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"code": "git_command_failed", "error": gitError.Error()})
+			return
+		}
 		if errors.Is(err, os.ErrExist) {
 			c.JSON(http.StatusConflict, gin.H{"code": "path_exists", "error": "destination already exists"})
 			return

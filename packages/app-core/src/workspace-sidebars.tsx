@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowDown,
-  ArrowUp,
   Bookmark,
   BookmarkPlus,
   CalendarDays,
   ChevronRight,
   ChevronsUpDown,
-  CircleDot,
   ExternalLink,
   FileText,
   FilePlus2,
@@ -25,17 +22,25 @@ import {
   Network,
   PanelLeft,
   PanelRight,
-  PlusCircle,
-  MinusCircle,
   Puzzle,
-  RefreshCw,
   Search,
   Settings2,
   Sparkles,
   Tags,
   X,
 } from "lucide-react";
-import { AlertDialog, HoverCard } from "radix-ui";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "@flux/shared-ui/components/ui/alert-dialog";
+import {
+  PreviewCard,
+  PreviewCardPopup,
+  PreviewCardTrigger,
+} from "@flux/shared-ui/components/ui/preview-card";
 import type {
   DocumentReferences,
   FileEntry,
@@ -57,6 +62,7 @@ export interface PluginRibbonItem {
   id: string;
   label: string;
   icon?: string;
+  iconSrc?: string;
   active?: boolean;
   onClick: () => void;
 }
@@ -64,6 +70,7 @@ export interface PluginRibbonItem {
 const pluginIcons = {
   puzzle: Puzzle,
   sparkles: Sparkles,
+  "git-branch": GitBranch,
   "panel-left": PanelLeft,
   "panel-right": PanelRight,
   "layout-dashboard": LayoutDashboard,
@@ -105,10 +112,6 @@ export function getRightOptions(
 
   if (!plugins || plugins["outline"] !== false) {
     options.push({ id: "outline", label: "Outline", icon: List });
-  }
-
-  if (!plugins || plugins["sync"] !== false) {
-    options.push({ id: "source-control", label: "Source Control", icon: GitBranch });
   }
 
   return options;
@@ -153,7 +156,10 @@ function PaneTabs<T extends string>({
   onChange: (id: T) => void;
 }) {
   return (
-    <nav aria-label="Sidebar views" className="flex h-8 items-center gap-1 overflow-hidden">
+    <nav
+      aria-label="Sidebar views"
+      className="flex h-8 items-center gap-1 overflow-hidden px-2"
+    >
       {options.map(({ id, label, icon: Icon }) => (
         <IconButton key={id} label={label} active={active === id} onClick={() => onChange(id)}>
           <Icon className="size-4" strokeWidth={1.8} />
@@ -218,14 +224,14 @@ function FileRow({
     .join(" • ");
 
   return (
-    <HoverCard.Root
+    <PreviewCard
       open={previewOpen}
       onOpenChange={(open) => {
         if (!open) setPreviewOpen(false);
       }}
     >
-      <HoverCard.Trigger asChild>
-        <button
+      <PreviewCardTrigger
+        render={<button
           type="button"
           role="treeitem"
           draggable
@@ -256,26 +262,24 @@ function FileRow({
               : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
           }`}
           style={{ paddingLeft: 8 + depth * 16 }}
-        >
-          <Files className="size-3.5 shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{document.title}</span>
-        </button>
-      </HoverCard.Trigger>
-      <HoverCard.Portal>
-        <HoverCard.Content
+        />}
+      >
+        <Files className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{document.title}</span>
+      </PreviewCardTrigger>
+        <PreviewCardPopup
           side="right"
           align="start"
           sideOffset={8}
-          className="z-[130] w-80 rounded-lg border bg-popover p-4 text-popover-foreground shadow-xl [border-color:var(--layout-separator)]"
+          className="z-[130] w-80"
         >
           <p className="truncate text-sm font-semibold">{document.title}</p>
           <p className="mt-1 text-[11px] text-muted-foreground">{metadata}</p>
           <p className="mt-3 line-clamp-6 text-xs leading-5 text-muted-foreground">
             {summary.preview || "Empty note"}
           </p>
-        </HoverCard.Content>
-      </HoverCard.Portal>
-    </HoverCard.Root>
+        </PreviewCardPopup>
+    </PreviewCard>
   );
 }
 
@@ -454,33 +458,33 @@ function FileExplorer({
           </div>
         ))}
       </div>
-      <AlertDialog.Root
+      <AlertDialog
         open={Boolean(pendingMove)}
         onOpenChange={(open) => !open && setPendingMove(undefined)}
       >
-        <AlertDialog.Portal>
-          <AlertDialog.Overlay className="fixed inset-0 z-[140] bg-black/35" />
-          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-[141] w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-popover p-5 text-popover-foreground shadow-2xl [border-color:var(--layout-separator)]">
-            <AlertDialog.Title className="text-sm font-semibold">Move file?</AlertDialog.Title>
-            <AlertDialog.Description className="mt-2 text-sm leading-5 text-muted-foreground">
+          <AlertDialogPopup
+            bottomStickOnMobile={false}
+            className="w-[min(420px,calc(100vw-2rem))] rounded-xl p-5"
+          >
+            <AlertDialogTitle className="text-sm font-semibold">Move file?</AlertDialogTitle>
+            <AlertDialogDescription className="mt-2 text-sm leading-5 text-muted-foreground">
               {pendingMove?.kind === "folder"
                 ? `Move “${pendingMove.title}” to ${pendingMove.folder ?? "vault root"}?`
                 : `Move “${pendingMove?.title ?? "file"}” before “${pendingMove?.kind === "reorder" ? pendingMove.before : "file"}”?`}
-            </AlertDialog.Description>
+            </AlertDialogDescription>
             <div className="mt-5 flex justify-end gap-2">
-              <AlertDialog.Cancel className="rounded-md px-3 py-1.5 text-sm hover:bg-accent">
+              <AlertDialogClose className="rounded-md px-3 py-1.5 text-sm hover:bg-accent">
                 Cancel
-              </AlertDialog.Cancel>
-              <AlertDialog.Action
+              </AlertDialogClose>
+              <AlertDialogClose
                 onClick={confirmMove}
                 className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground"
               >
                 Move
-              </AlertDialog.Action>
+              </AlertDialogClose>
             </div>
-          </AlertDialog.Content>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
+          </AlertDialogPopup>
+      </AlertDialog>
     </>
   );
 }
@@ -1584,49 +1588,6 @@ function RightContent({
       </SidebarPane>
     );
   }
-  if (pane === "source-control")
-    return (
-      <SidebarPane
-        controls={
-          <SidebarToolbar wrap>
-            <IconButton label="Commit and sync">
-              <ArrowUp className="size-3.5" />
-            </IconButton>
-            <IconButton label="Commit">
-              <CircleDot className="size-3.5" />
-            </IconButton>
-            <IconButton label="Stage all">
-              <PlusCircle className="size-3.5" />
-            </IconButton>
-            <IconButton label="Unstage all">
-              <MinusCircle className="size-3.5" />
-            </IconButton>
-            <IconButton label="Push">
-              <ArrowUp className="size-3.5" />
-            </IconButton>
-            <IconButton label="Pull">
-              <ArrowDown className="size-3.5" />
-            </IconButton>
-            <IconButton label="Open repository">
-              <FolderOpen className="size-3.5" />
-            </IconButton>
-            <IconButton label="Refresh">
-              <RefreshCw className="size-3.5" />
-            </IconButton>
-          </SidebarToolbar>
-        }
-      >
-        <div className="p-2">
-          <label className="flex h-8 items-center rounded-md border bg-background px-2 [border-color:var(--layout-separator)]">
-            <input
-              aria-label="Commit message"
-              placeholder="vault backup: {{date}}"
-              className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-            />
-          </label>
-        </div>
-      </SidebarPane>
-    );
   return null;
 }
 
@@ -1850,7 +1811,6 @@ export function WorkspaceRibbon({
   const showGraph = !plugins || plugins["graph-view"] !== false;
   const showCanvas = !plugins || plugins["canvas"] !== false;
   const showDailyNotes = !plugins || plugins["daily-notes"] !== false;
-  const showSync = !plugins || plugins["sync"] !== false;
 
   return (
     <nav aria-label="Workspace tools" className="flex h-full flex-col items-center gap-0.5 py-1.5">
@@ -1874,11 +1834,6 @@ export function WorkspaceRibbon({
           <CalendarDays className="size-4" />
         </IconButton>
       ) : null}
-      {showSync ? (
-        <IconButton label="Source Control">
-          <GitBranch className="size-4" />
-        </IconButton>
-      ) : null}
       <IconButton label="Plugins" onClick={onPlugins}>
         <Puzzle className="size-4" />
       </IconButton>
@@ -1889,7 +1844,16 @@ export function WorkspaceRibbon({
         const PluginIcon = pluginIcons[item.icon as keyof typeof pluginIcons] ?? Puzzle;
         return (
           <IconButton key={item.id} label={item.label} active={item.active} onClick={item.onClick}>
-            <PluginIcon className="size-4" />
+            {item.iconSrc ? (
+              <span
+                aria-hidden="true"
+                className="size-4 bg-current"
+                style={{
+                  WebkitMask: `center / contain no-repeat url("${item.iconSrc}")`,
+                  mask: `center / contain no-repeat url("${item.iconSrc}")`,
+                }}
+              />
+            ) : <PluginIcon className="size-4" />}
           </IconButton>
         );
       })}

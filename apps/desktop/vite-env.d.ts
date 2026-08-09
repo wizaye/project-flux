@@ -18,6 +18,7 @@ interface Window {
       memoryMB: number;
     }>;
     setTheme: (theme: "dark" | "light" | "system") => Promise<void>;
+    setMenuBarIconEnabled: (enabled: boolean) => Promise<void>;
     openWindow: (url: string) => Promise<void>;
     onBeforeClose: (handler: () => Promise<void>) => () => void;
     exportPdf: (options: {

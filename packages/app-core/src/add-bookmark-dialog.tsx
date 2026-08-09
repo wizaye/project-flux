@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { Dialog } from "radix-ui";
 import { X, ChevronsUpDown } from "lucide-react";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogPopup,
+  DialogTitle,
+} from "@flux/shared-ui/components/ui/dialog";
 import type { BookmarkItem } from "./bookmark-store";
 
 export interface AddBookmarkDialogProps {
@@ -74,21 +80,23 @@ export function AddBookmarkDialog({
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[180] bg-black/50" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[181] w-[min(460px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-popover p-5 text-popover-foreground shadow-2xl [border-color:var(--layout-separator)]">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogPopup
+          bottomStickOnMobile={false}
+          showCloseButton={false}
+          className="w-[min(460px,calc(100vw-2rem))] rounded-xl p-5"
+        >
           <div className="relative flex items-center justify-between mb-4">
-            <Dialog.Title className="text-sm font-semibold text-foreground">
+            <DialogTitle className="text-sm font-semibold text-foreground">
               {isEditing ? "Edit bookmark" : "Add bookmark"}
-            </Dialog.Title>
-            <Dialog.Close className="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors outline-none">
+            </DialogTitle>
+            <DialogClose className="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors outline-none">
               <X className="size-4" />
-            </Dialog.Close>
+            </DialogClose>
           </div>
-          <Dialog.Description className="sr-only">
+          <DialogDescription className="sr-only">
             {isEditing ? "Edit bookmark details" : "Add bookmark details"}
-          </Dialog.Description>
+          </DialogDescription>
 
           <div className="mt-2 text-xs">
             {/* Row 1: Path */}
@@ -181,9 +189,9 @@ export function AddBookmarkDialog({
               <div />
             )}
             <div className="flex items-center gap-2">
-              <Dialog.Close className="rounded-md bg-[#363636] hover:bg-[#444444] text-foreground border border-[#383838] shadow-sm px-4 py-1.5 text-xs font-medium transition-colors">
+              <DialogClose className="rounded-md bg-[#363636] hover:bg-[#444444] text-foreground border border-[#383838] shadow-sm px-4 py-1.5 text-xs font-medium transition-colors">
                 Cancel
-              </Dialog.Close>
+              </DialogClose>
               <button
                 type="button"
                 onClick={handleSave}
@@ -194,8 +202,7 @@ export function AddBookmarkDialog({
               </button>
             </div>
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </DialogPopup>
+    </Dialog>
   );
 }

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -51,9 +52,10 @@ type InstallResult struct {
 }
 
 type CatalogPlugin struct {
-	Manifest Manifest        `json:"manifest"`
-	Plugin   InstalledPlugin `json:"plugin"`
-	Active   bool            `json:"active"`
+	Manifest  Manifest          `json:"manifest"`
+	Plugin    InstalledPlugin   `json:"plugin"`
+	Active    bool              `json:"active"`
+	ViewIcons map[string]string `json:"viewIcons,omitempty"`
 }
 
 type RuntimeBundle struct {
@@ -82,7 +84,18 @@ func (m *Manager) List() ([]CatalogPlugin, error) {
 		if err := json.Unmarshal([]byte(item.ManifestJSON), &manifest); err != nil {
 			return nil, err
 		}
-		result = append(result, CatalogPlugin{Manifest: manifest, Plugin: item, Active: activeVersions[item.PluginID] == item.Version})
+		viewIcons := make(map[string]string)
+		for _, view := range manifest.Contributions.Views {
+			if view.IconPath == "" {
+				continue
+			}
+			data, readErr := os.ReadFile(filepath.Join(item.InstallPath, filepath.FromSlash(view.IconPath)))
+			if readErr != nil || len(data) > 64*1024 {
+				continue
+			}
+			viewIcons[view.ID] = "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(data)
+		}
+		result = append(result, CatalogPlugin{Manifest: manifest, Plugin: item, Active: activeVersions[item.PluginID] == item.Version, ViewIcons: viewIcons})
 	}
 	return result, nil
 }
@@ -293,6 +306,12 @@ func (m *Manager) installPackage(ctx context.Context, archivePath, expectedSHA25
 		viewInfo, err := os.Stat(filepath.Join(temporary, filepath.FromSlash(view.Entry)))
 		if err != nil || !viewInfo.Mode().IsRegular() {
 			return InstallResult{}, fmt.Errorf("plugin view entry %q is missing", view.Entry)
+		}
+		if view.IconPath != "" {
+			iconInfo, iconErr := os.Stat(filepath.Join(temporary, filepath.FromSlash(view.IconPath)))
+			if iconErr != nil || !iconInfo.Mode().IsRegular() || iconInfo.Size() > 64*1024 {
+				return InstallResult{}, fmt.Errorf("plugin view icon %q is missing or exceeds 64 KiB", view.IconPath)
+			}
 		}
 	}
 	plugin := InstalledPlugin{

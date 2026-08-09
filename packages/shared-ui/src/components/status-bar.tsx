@@ -8,7 +8,13 @@ import {
   Settings2,
   Vault,
 } from "lucide-react";
-import { DropdownMenu } from "radix-ui";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "./ui/menu";
 
 export interface FluxVaultOption {
   id: string;
@@ -22,7 +28,7 @@ export interface FluxStatusBarProps {
   onManageVaults?: () => void;
   version: string;
   updateStatus: string;
-  gitStatus: string;
+  gitStatus?: string;
   connectionStatus: string;
   characters: number;
   words: number;
@@ -57,60 +63,51 @@ export function FluxStatusBar({
   return (
     <div className="grid h-full w-full min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
       <div className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap">
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <button
+        <Menu>
+          <MenuTrigger
+            render={<button
               type="button"
               aria-label="Switch vault"
-              className="flex h-7 min-w-0 max-w-48 items-center gap-1.5 rounded-sm px-1.5 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/50 data-[state=open]:bg-accent data-[state=open]:text-foreground"
-            >
-              <Vault className="size-3.5 shrink-0" />
-              <span className="truncate font-medium text-foreground">
-                {activeVault?.label ?? "Vault"}
-              </span>
-              <ChevronsUpDown className="size-3 shrink-0 opacity-60" />
-            </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content
-              side="top"
-              align="start"
-              sideOffset={6}
-              className="z-[110] min-w-56 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg [border-color:var(--layout-separator)]"
-            >
-              {vaults.map((vault) => (
-                <DropdownMenu.Item
-                  key={vault.id}
-                  onSelect={() => onVaultChange(vault.id)}
-                  className="relative flex h-8 cursor-default select-none items-center rounded-md px-2 pr-8 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
-                >
-                  <span className="truncate">{vault.label}</span>
-                  {vault.id === activeVaultId ? (
-                    <Check className="absolute right-2 size-4" />
-                  ) : null}
-                </DropdownMenu.Item>
-              ))}
-              <DropdownMenu.Separator className="my-1 h-px bg-[var(--layout-separator)]" />
-              <DropdownMenu.Item
-                disabled={!onManageVaults}
-                onSelect={onManageVaults}
-                className="flex h-8 cursor-default select-none items-center gap-2 rounded-md px-2 text-sm outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+              className="flex h-7 min-w-0 max-w-48 items-center gap-1.5 rounded-sm px-1.5 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/50 data-popup-open:bg-accent data-popup-open:text-foreground"
+            />}
+          >
+            <Vault className="size-3.5 shrink-0" />
+            <span className="truncate font-medium text-foreground">
+              {activeVault?.label ?? "Vault"}
+            </span>
+            <ChevronsUpDown className="size-3 shrink-0 opacity-60" />
+          </MenuTrigger>
+          <MenuPopup side="top" align="start" sideOffset={6} className="z-[110] min-w-56">
+            {vaults.map((vault) => (
+              <MenuItem
+                key={vault.id}
+                onClick={() => onVaultChange(vault.id)}
+                className="relative pr-8"
               >
-                <Settings2 className="size-4 text-muted-foreground" />
-                Manage vaults…
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
+                <span className="truncate">{vault.label}</span>
+                {vault.id === activeVaultId ? <Check className="absolute right-2 size-4" /> : null}
+              </MenuItem>
+            ))}
+            <MenuSeparator />
+            <MenuItem disabled={!onManageVaults} onClick={onManageVaults}>
+              <Settings2 className="text-muted-foreground" />
+              Manage vaults…
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
         <StatusSeparator />
         <span className="truncate" title={`${version} · ${updateStatus}`}>
           {version} · {updateStatus}
         </span>
-        <StatusSeparator />
-        <span className="flex shrink-0 items-center gap-1" title="Git plugin status">
-          <GitBranch className="size-3.5" />
-          {gitStatus}
-        </span>
+        {gitStatus ? (
+          <>
+            <StatusSeparator />
+            <span className="flex shrink-0 items-center gap-1" title="Git plugin status">
+              <GitBranch className="size-3.5" />
+              {gitStatus}
+            </span>
+          </>
+        ) : null}
       </div>
 
       <span className="max-w-64 truncate px-2 text-center" title={connectionStatus}>

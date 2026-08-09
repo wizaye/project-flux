@@ -277,7 +277,7 @@ func TestManifestValidatesSafeViewPlacement(t *testing.T) {
 	manifest := testManifest("1.0.0")
 	manifest.Contributions.Views = []ViewContribution{{
 		ID: "example.plugin.panel", Title: "Panel", Entry: "dist/panel.html",
-		Location: "right-sidebar", Icon: "panel-right",
+		Location: "right-sidebar", Icon: "panel-right", IconPath: "dist/icon.svg",
 	}}
 	if err := manifest.Validate(); err != nil {
 		t.Fatalf("safe view placement rejected: %v", err)
@@ -290,6 +290,11 @@ func TestManifestValidatesSafeViewPlacement(t *testing.T) {
 		t.Fatal("expected unsupported view location rejection")
 	}
 	manifest.Contributions.Views[0].Location = "workspace"
+	manifest.Contributions.Views[0].IconPath = "../icon.svg"
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("expected unsafe view icon path rejection")
+	}
+	manifest.Contributions.Views[0].IconPath = ""
 	manifest.Contributions.Views[0].Icon = "<svg>"
 	if err := manifest.Validate(); err == nil {
 		t.Fatal("expected unsupported view icon rejection")

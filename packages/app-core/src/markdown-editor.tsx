@@ -43,7 +43,15 @@ import { highlightSelectionMatches, openSearchPanel, searchKeymap } from "@codem
 import { EditorState, StateField, StateEffect } from "@codemirror/state";
 import { EditorView, keymap, type Command, Decoration, type DecorationSet } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
-import { DropdownMenu } from "radix-ui";
+import {
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuItem,
+  MenuSeparator,
+  MenuSub as CossMenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+} from "@flux/shared-ui/components/ui/menu";
 import { Spinner } from "@flux/shared-ui/components/spinner";
 import { splitFrontmatter } from "./frontmatter";
 import { markdownAssist } from "./editor-assist";
@@ -1153,19 +1161,15 @@ export function MarkdownEditor({
 
 const menuItemClassName =
   "relative flex h-8 cursor-default select-none items-center gap-2 rounded-md px-2 pr-7 text-sm outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground";
-const separatorClassName = "my-1 h-px bg-[var(--layout-separator)]";
-const submenuClassName =
-  "z-[120] min-w-56 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg [border-color:var(--layout-separator)]";
-
 function MenuCheck() {
   return <Check className="absolute right-2 size-3.5" />;
 }
 
 function DisabledItem({ children }: { children: ReactNode }) {
   return (
-    <DropdownMenu.Item className={menuItemClassName} disabled>
+    <MenuItem className={menuItemClassName} disabled>
       {children}
-    </DropdownMenu.Item>
+    </MenuItem>
   );
 }
 
@@ -1179,18 +1183,15 @@ function MenuSub({
   children: ReactNode;
 }) {
   return (
-    <DropdownMenu.Sub>
-      <DropdownMenu.SubTrigger className={menuItemClassName}>
+    <CossMenuSub>
+      <MenuSubTrigger className={menuItemClassName}>
         {icon}
         {label}
-        <ChevronRight className="absolute right-2 size-3.5" />
-      </DropdownMenu.SubTrigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.SubContent sideOffset={4} className={submenuClassName}>
-          {children}
-        </DropdownMenu.SubContent>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Sub>
+      </MenuSubTrigger>
+      <MenuSubPopup sideOffset={4} className="z-[120] min-w-56">
+        {children}
+      </MenuSubPopup>
+    </CossMenuSub>
   );
 }
 
@@ -1239,132 +1240,127 @@ export function MarkdownDocumentMenu({
   const fileName = `${title || "Untitled"}.md`;
 
   return (
-    <DropdownMenu.Group className="max-h-[min(72vh,38rem)] overflow-y-auto">
-      <DropdownMenu.CheckboxItem
+    <MenuGroup>
+      <MenuCheckboxItem
         checked={showBacklinks}
         onCheckedChange={onBacklinksChange}
-        className={menuItemClassName}
       >
-        <Network className="size-4 text-muted-foreground" />
         Backlinks in document
-        <DropdownMenu.ItemIndicator>
-          <MenuCheck />
-        </DropdownMenu.ItemIndicator>
-      </DropdownMenu.CheckboxItem>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={() => onModeChange("read")}>
+      </MenuCheckboxItem>
+      <MenuItem className={menuItemClassName} onClick={() => onModeChange("read")}>
         <BookOpen className="size-4 text-muted-foreground" />
         Reading view{mode === "read" ? <MenuCheck /> : null}
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={() => onModeChange("live")}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={() => onModeChange("live")}>
         <Eye className="size-4 text-muted-foreground" />
         Live Preview{mode === "live" ? <MenuCheck /> : null}
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={() => onModeChange("source")}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={() => onModeChange("source")}>
         <Pencil className="size-4 text-muted-foreground" />
         Source mode{mode === "source" ? <MenuCheck /> : null}
-      </DropdownMenu.Item>
-      <DropdownMenu.Separator className={separatorClassName} />
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onSplitRight}>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem className={menuItemClassName} onClick={onSplitRight}>
         <PanelRightOpen className="size-4" />
         Split right
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onSplitDown}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={onSplitDown}>
         <PanelBottomOpen className="size-4" />
         Split down
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onMoveToNewWindow}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={onMoveToNewWindow}>
         <ExternalLink className="size-4" />
         Open in new window
-      </DropdownMenu.Item>
-      <DropdownMenu.Separator className={separatorClassName} />
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onRename}>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem className={menuItemClassName} onClick={onRename}>
         <FilePenLine className="size-4 text-muted-foreground" />
         Rename…
-      </DropdownMenu.Item>
+      </MenuItem>
       <DisabledItem>
         <FolderInput className="size-4" />
         Move file to…
       </DisabledItem>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={() => onBookmarkChange(true)}>
+      <MenuItem className={menuItemClassName} onClick={() => onBookmarkChange(true)}>
         <Bookmark className="size-4 text-muted-foreground" />
         Bookmark…
         {bookmarked ? <MenuCheck /> : null}
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onMerge}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={onMerge}>
         <Merge className="size-4" />
         Merge entire file with…
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onAddProperty}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={onAddProperty}>
         <ListPlus className="size-4 text-muted-foreground" />
         Add file property
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onExportPdf}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={onExportPdf}>
         <FileDown className="size-4 text-muted-foreground" />
         Export to PDF…
-      </DropdownMenu.Item>
-      <DropdownMenu.Separator className={separatorClassName} />
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onFind}>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem className={menuItemClassName} onClick={onFind}>
         <Search className="size-4 text-muted-foreground" />
         Find…
-      </DropdownMenu.Item>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onFind}>
+      </MenuItem>
+      <MenuItem className={menuItemClassName} onClick={onFind}>
         <Pencil className="size-4 text-muted-foreground" />
         Replace…
-      </DropdownMenu.Item>
+      </MenuItem>
       <MenuSub label="Copy path" icon={<Copy className="size-4 text-muted-foreground" />}>
-        <DropdownMenu.Item
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => copy(`flux://open?file=${encodeURIComponent(fileName)}`)}
+          onClick={() => copy(`flux://open?file=${encodeURIComponent(fileName)}`)}
         >
           as Flux URL
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
+        </MenuItem>
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => copy(`Personal vault/${fileName}`)}
+          onClick={() => copy(`Personal vault/${fileName}`)}
         >
           from vault folder
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
+        </MenuItem>
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => copy(`/Personal vault/${fileName}`)}
+          onClick={() => copy(`/Personal vault/${fileName}`)}
         >
           from system root
-        </DropdownMenu.Item>
+        </MenuItem>
       </MenuSub>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onVersionHistory}>
+      <MenuItem className={menuItemClassName} onClick={onVersionHistory}>
         <History className="size-4" />
         Open version history
-      </DropdownMenu.Item>
+      </MenuItem>
       <MenuSub label="Open linked view" icon={<Network className="size-4 text-muted-foreground" />}>
-        <DropdownMenu.Item className={menuItemClassName} onSelect={() => onOpenLinkedView("graph")}>
+        <MenuItem className={menuItemClassName} onClick={() => onOpenLinkedView("graph")}>
           Open local graph
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
+        </MenuItem>
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => onOpenLinkedView("backlinks")}
+          onClick={() => onOpenLinkedView("backlinks")}
         >
           Open backlinks
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
+        </MenuItem>
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => onOpenLinkedView("outgoing")}
+          onClick={() => onOpenLinkedView("outgoing")}
         >
           Open outgoing links
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
+        </MenuItem>
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => onOpenLinkedView("properties")}
+          onClick={() => onOpenLinkedView("properties")}
         >
           Open file properties
-        </DropdownMenu.Item>
-        <DropdownMenu.Item
+        </MenuItem>
+        <MenuItem
           className={menuItemClassName}
-          onSelect={() => onOpenLinkedView("outline")}
+          onClick={() => onOpenLinkedView("outline")}
         >
           Open outline
-        </DropdownMenu.Item>
+        </MenuItem>
       </MenuSub>
-      <DropdownMenu.Separator className={separatorClassName} />
+      <MenuSeparator />
       <DisabledItem>
         <ExternalLink className="size-4" />
         Open in default app
@@ -1373,22 +1369,23 @@ export function MarkdownDocumentMenu({
         <FolderInput className="size-4" />
         Reveal in Finder
       </DisabledItem>
-      <DropdownMenu.Item className={menuItemClassName} onSelect={onRevealInNavigation}>
+      <MenuItem className={menuItemClassName} onClick={onRevealInNavigation}>
         <FolderInput className="size-4" />
         Reveal file in navigation
-      </DropdownMenu.Item>
-      <DropdownMenu.Item
-        className={`${menuItemClassName} text-destructive data-[highlighted]:text-destructive`}
-        onSelect={onDelete}
+      </MenuItem>
+      <MenuItem
+        className={menuItemClassName}
+        variant="destructive"
+        onClick={onDelete}
       >
         <Trash2 className="size-4" />
         Delete file
-      </DropdownMenu.Item>
+      </MenuItem>
       <DisabledItem>
         <Plus className="size-4" />
         New drawing
       </DisabledItem>
-    </DropdownMenu.Group>
+    </MenuGroup>
   );
 }
 

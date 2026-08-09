@@ -65,6 +65,7 @@ describe("plugin tooling", () => {
             entry: "dist/panel.html",
             location: "right-sidebar",
             icon: "panel-right",
+            iconPath: "dist/icon.svg",
           },
         ],
         settings: [{ id: "example.plugin.limit", title: "Limit", type: "number", default: 10 }],
@@ -97,6 +98,9 @@ describe("plugin tooling", () => {
     view.location = "modal";
     view.icon = "<svg>";
     expect(() => validateManifest(manifest)).toThrow("supported built-in icon");
+    view.icon = "panel-right";
+    view.iconPath = "../icon.svg";
+    expect(() => validateManifest(manifest)).toThrow("clean relative .svg path");
   });
 
   test("packs built files as a checksumed ZIP", () => {
