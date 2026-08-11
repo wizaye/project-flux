@@ -121,6 +121,7 @@ export interface FluxRuntime {
   selectVaultDirectory?: (mode: "open" | "create") => Promise<string | null>;
   getPerformanceStats?: () => Promise<FluxPerformanceStats | null>;
   openWindow?: (url: string) => Promise<void>;
+  openPublicationPreview?: (sitePath: string) => Promise<void>;
   hideWindow?: () => Promise<void>;
   getMCPServerCommand?: () => Promise<{ command: string; args: string[] }>;
   onCommand?: (
@@ -5802,6 +5803,7 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
             }}
             getMCPServerCommand={runtime.getMCPServerCommand}
             onMenuBarIconChange={runtime.setMenuBarIconEnabled}
+            openPublicationPreview={runtime.openPublicationPreview}
           />
           <AddBookmarkDialog
             key={`${bookmarkTarget?.path ?? bookmarkTarget?.title ?? "none"}:${addBookmarkDialogOpen}`}

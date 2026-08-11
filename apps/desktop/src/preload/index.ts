@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setMenuBarIconEnabled: (enabled: boolean) =>
     ipcRenderer.invoke("set-menu-bar-icon-enabled", enabled),
   openWindow: (url: string) => ipcRenderer.invoke("open-window", url),
+  openPublicationPreview: (sitePath: string) =>
+    ipcRenderer.invoke("open-publication-preview", sitePath),
   onBeforeClose: (handler: () => Promise<void>) => {
     const listener = () => {
       void handler().finally(() => ipcRenderer.send("flux-close-ready"));

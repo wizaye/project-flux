@@ -102,6 +102,7 @@ func RegisterRoutes(router *gin.Engine, app *application.Service, options ...Rou
 	v1.GET("/vaults/:vaultId/search", handler.search)
 	v1.GET("/vaults/:vaultId/references", handler.references)
 	v1.GET("/vaults/:vaultId/facets", handler.facets)
+	registerPublishRoutes(v1, handler)
 	v1.GET("/vaults/:vaultId/files/metadata", handler.fileMetadata)
 	v1.POST("/vaults/:vaultId/directories", handler.createDirectory)
 	v1.POST("/vaults/:vaultId/files", handler.createFile)
@@ -1418,6 +1419,8 @@ func writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": "invalid_retention", "error": err.Error()})
 	case errors.Is(err, application.ErrInvalidVaultPlan):
 		c.JSON(http.StatusBadRequest, gin.H{"code": "invalid_vault_plan", "error": err.Error()})
+	case errors.Is(err, application.ErrPublicationNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"code": "publication_not_found", "error": err.Error()})
 	case errors.Is(err, gitadapter.ErrNotRepository), errors.Is(err, gitadapter.ErrMessageNeeded), errors.Is(err, gitadapter.ErrInvalidPath):
 		c.JSON(http.StatusBadRequest, gin.H{"code": "git_request_failed", "error": err.Error()})
 	default:

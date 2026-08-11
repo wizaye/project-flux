@@ -94,7 +94,7 @@ func (s *Service) Metadata(relativePath string) (domain.FileEntry, error) {
 	if err != nil {
 		return domain.FileEntry{}, err
 	}
-	if err := rejectSymlinks(s.root, resolvedPath); err != nil {
+	if err := RejectSymlinks(s.root, resolvedPath); err != nil {
 		return domain.FileEntry{}, err
 	}
 	info, err := os.Stat(resolvedPath)
@@ -111,7 +111,7 @@ func (s *Service) CreateDirectory(relativePath string) (domain.FileEntry, error)
 	if err != nil {
 		return domain.FileEntry{}, err
 	}
-	if err := rejectSymlinks(s.root, filepath.Dir(resolvedPath)); err != nil {
+	if err := RejectSymlinks(s.root, filepath.Dir(resolvedPath)); err != nil {
 		return domain.FileEntry{}, err
 	}
 	if err := os.MkdirAll(resolvedPath, 0o755); err != nil {
@@ -131,7 +131,7 @@ func (s *Service) Create(relativePath, content string) (domain.FileDocument, dom
 	if err != nil {
 		return domain.FileDocument{}, domain.FileEntry{}, err
 	}
-	if err := rejectSymlinks(s.root, filepath.Dir(resolvedPath)); err != nil {
+	if err := RejectSymlinks(s.root, filepath.Dir(resolvedPath)); err != nil {
 		return domain.FileDocument{}, domain.FileEntry{}, err
 	}
 	file, err := os.OpenFile(resolvedPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -175,7 +175,7 @@ func (s *Service) Read(relativePath string) (domain.FileDocument, error) {
 	if err != nil {
 		return domain.FileDocument{}, err
 	}
-	if err := rejectSymlinks(s.root, resolvedPath); err != nil {
+	if err := RejectSymlinks(s.root, resolvedPath); err != nil {
 		return domain.FileDocument{}, err
 	}
 
@@ -206,7 +206,7 @@ func (s *Service) Save(relativePath, content, expectedHash string) (domain.SaveR
 	if err != nil {
 		return domain.SaveResult{}, domain.FileEntry{}, err
 	}
-	if err := rejectSymlinks(s.root, filepath.Dir(resolvedPath)); err != nil {
+	if err := RejectSymlinks(s.root, filepath.Dir(resolvedPath)); err != nil {
 		return domain.SaveResult{}, domain.FileEntry{}, err
 	}
 	fileLock := s.fileLock(resolvedPath)
@@ -246,7 +246,7 @@ func (s *Service) Patch(relativePath, expectedHash string, edits []domain.TextEd
 	if err != nil {
 		return domain.SaveResult{}, domain.FileEntry{}, err
 	}
-	if err := rejectSymlinks(s.root, resolvedPath); err != nil {
+	if err := RejectSymlinks(s.root, resolvedPath); err != nil {
 		return domain.SaveResult{}, domain.FileEntry{}, err
 	}
 	lock := s.fileLock(resolvedPath)
@@ -309,10 +309,10 @@ func (s *Service) move(
 	if err != nil {
 		return domain.FileEntry{}, err
 	}
-	if err := rejectSymlinks(s.root, source); err != nil {
+	if err := RejectSymlinks(s.root, source); err != nil {
 		return domain.FileEntry{}, err
 	}
-	if err := rejectSymlinks(s.root, filepath.Dir(destination)); err != nil {
+	if err := RejectSymlinks(s.root, filepath.Dir(destination)); err != nil {
 		return domain.FileEntry{}, err
 	}
 	if source == destination {
@@ -406,7 +406,7 @@ func (s *Service) Delete(relativePath string) (domain.TrashEntry, error) {
 	if err != nil {
 		return domain.TrashEntry{}, err
 	}
-	if err := rejectSymlinks(s.root, resolvedPath); err != nil {
+	if err := RejectSymlinks(s.root, resolvedPath); err != nil {
 		return domain.TrashEntry{}, err
 	}
 	info, err := os.Stat(resolvedPath)
@@ -549,7 +549,7 @@ func (s *Service) Restore(trashID string) (domain.FileEntry, error) {
 	if err != nil {
 		return domain.FileEntry{}, err
 	}
-	if err := rejectSymlinks(s.root, filepath.Dir(destination)); err != nil {
+	if err := RejectSymlinks(s.root, filepath.Dir(destination)); err != nil {
 		return domain.FileEntry{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
@@ -632,7 +632,7 @@ func (s *Service) RemoveCreated(relativePath, expectedHash string) error {
 	if err != nil {
 		return err
 	}
-	if err := rejectSymlinks(s.root, resolvedPath); err != nil {
+	if err := RejectSymlinks(s.root, resolvedPath); err != nil {
 		return err
 	}
 	content, err := os.ReadFile(resolvedPath)
@@ -645,7 +645,7 @@ func (s *Service) RemoveCreated(relativePath, expectedHash string) error {
 	return os.Remove(resolvedPath)
 }
 
-func rejectSymlinks(root, target string) error {
+func RejectSymlinks(root, target string) error {
 	relative, err := filepath.Rel(root, target)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return ErrInvalidPath

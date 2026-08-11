@@ -14,6 +14,7 @@ import {
   Pencil,
   Plug,
   Plus,
+  Globe2,
   Search,
   Settings,
   Shield,
@@ -35,6 +36,7 @@ import {
   type EditorSettings,
   type AppearanceSettings,
 } from "./settings-store";
+import { PublishingSettings } from "./publishing-settings";
 
 type SettingsPage =
   | "general"
@@ -42,6 +44,7 @@ type SettingsPage =
   | "appearance"
   | "keychain"
   | "daily-notes"
+  | "publishing"
   | "mcp"
   | "core-plugins"
   | "community-plugins";
@@ -57,6 +60,7 @@ interface SettingsDialogProps {
   onVaultConfigChange?: () => void;
   getMCPServerCommand?: () => Promise<{ command: string; args: string[] }>;
   onMenuBarIconChange?: (enabled: boolean) => void;
+  openPublicationPreview?: (sitePath: string) => Promise<void>;
 }
 
 function SettingRow({
@@ -184,6 +188,7 @@ const navItems: Array<{
   { id: "appearance", label: "Appearance", icon: Paintbrush },
   { id: "keychain", label: "Keychain", icon: KeyRound },
   { id: "daily-notes", label: "Daily Notes", icon: CalendarDays },
+  { id: "publishing", label: "Publishing", icon: Globe2 },
   { id: "mcp", label: "MCP Connections", icon: Terminal },
   { id: "core-plugins", label: "Core Plugins", icon: Plug, section: "Plugins" },
   { id: "community-plugins", label: "Community Plugins", icon: Blocks },
@@ -1227,6 +1232,7 @@ export function SettingsDialog({
   onVaultConfigChange,
   getMCPServerCommand,
   onMenuBarIconChange,
+  openPublicationPreview,
 }: SettingsDialogProps) {
   const [activePage, setActivePage] = useState<SettingsPage>("general");
   const ActivePageComponent = pageComponents[activePage] ?? GeneralPage;
@@ -1272,6 +1278,12 @@ export function SettingsDialog({
                 client={client}
                 vaultId={vaultId}
                 onSaved={onVaultConfigChange}
+              />
+            ) : activePage === "publishing" ? (
+              <PublishingSettings
+                client={client}
+                vaultId={vaultId}
+                openPublicationPreview={openPublicationPreview}
               />
             ) : activePage === "general" ? (
               <GeneralPage

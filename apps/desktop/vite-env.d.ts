@@ -20,6 +20,7 @@ interface Window {
     setTheme: (theme: "dark" | "light" | "system") => Promise<void>;
     setMenuBarIconEnabled: (enabled: boolean) => Promise<void>;
     openWindow: (url: string) => Promise<void>;
+    openPublicationPreview: (sitePath: string) => Promise<void>;
     onBeforeClose: (handler: () => Promise<void>) => () => void;
     exportPdf: (options: {
       title: string;

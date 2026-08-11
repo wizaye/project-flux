@@ -149,6 +149,99 @@ export interface VaultFacets {
   properties: FacetCount[];
 }
 
+export interface Publication {
+  id: string;
+  vaultId: string;
+  name: string;
+  title: string;
+  renderer?: PublicationRenderer;
+  selection: {
+    defaultPublic: boolean;
+    include: string[];
+    exclude: string[];
+  };
+  explicitPaths?: string[];
+  deployment: PublicationDeployment;
+  createdAt: string;
+  updatedAt: string;
+  lastSnapshot?: string;
+  publishedUrl?: string;
+  publishedAt?: string;
+  state: "draft" | "ready" | "published";
+}
+
+export interface PublicationDeployment {
+  provider: "bundle" | "github-pages" | "vercel" | "cloudflare-pages" | "netlify" | "flowershow";
+  repositoryUrl?: string;
+  branch?: string;
+  project?: string;
+}
+
+export interface PublicationRenderer {
+  id: "flux" | "fumadocs" | "quartz" | "flowershow";
+}
+
+export interface PublicationConnector {
+  provider: PublicationDeployment["provider"];
+  command: string;
+  available: boolean;
+  authenticated: boolean;
+  managed: boolean;
+  message?: string;
+}
+
+export interface CreatePublicationRequest {
+  name: string;
+  title?: string;
+  include: string[];
+  exclude: string[];
+  explicitPaths?: string[];
+  renderer?: PublicationRenderer;
+  deployment?: PublicationDeployment;
+}
+
+export interface UpdatePublicationRequest {
+  name?: string;
+  title?: string;
+  include: string[];
+  exclude: string[];
+  explicitPaths: string[];
+  renderer?: PublicationRenderer;
+  deployment?: PublicationDeployment;
+}
+
+export interface PublicationSnapshotResult {
+  snapshotId: string;
+  outputPath: string;
+  pageCount: number;
+  assetCount: number;
+  linkCount: number;
+  warnings: string[];
+  alreadyUpToDate: boolean;
+  sitePath: string;
+  publishedUrl?: string;
+  state: "ready" | "published";
+}
+
+export interface PublicationJob {
+  id: string;
+  publicationId: string;
+  kind: "preview" | "publish";
+  status:
+    | "queued"
+    | "snapshotting"
+    | "rendering"
+    | "deploying"
+    | "ready"
+    | "succeeded"
+    | "failed"
+    | "cancelled";
+  createdAt: string;
+  updatedAt: string;
+  result?: PublicationSnapshotResult;
+  error?: string;
+}
+
 export interface SaveFileRequest {
   vaultId: string;
   path: string;
@@ -378,6 +471,26 @@ export interface FluxClient {
     includeUnlinked?: boolean
   ): Promise<DocumentReferences>;
   getVaultFacets(vaultId: string): Promise<VaultFacets>;
+  listPublicationConnectors(): Promise<PublicationConnector[]>;
+  setupPublicationConnector(provider: PublicationDeployment["provider"]): Promise<PublicationConnector>;
+  listPublications(vaultId: string): Promise<Publication[]>;
+  createPublication(vaultId: string, request: CreatePublicationRequest): Promise<Publication>;
+  updatePublication(
+    vaultId: string,
+    publicationId: string,
+    request: UpdatePublicationRequest
+  ): Promise<Publication>;
+  deletePublication(vaultId: string, publicationId: string): Promise<void>;
+  previewPublication(vaultId: string, publicationId: string): Promise<PublicationJob>;
+  publishPublication(vaultId: string, publicationId: string): Promise<PublicationJob>;
+  listPublicationJobs(vaultId: string, publicationId: string): Promise<PublicationJob[]>;
+  getPublicationJob(vaultId: string, publicationId: string, jobId: string): Promise<PublicationJob>;
+  getPublicationPreview(
+    vaultId: string,
+    publicationId: string,
+    snapshotId: string
+  ): Promise<string>;
+  unpublishPublication(vaultId: string, publicationId: string): Promise<void>;
   getFileMetadata(vaultId: string, path: string): Promise<FileEntry | null>;
   rebuildIndex(vaultId: string): Promise<void>;
   createDirectory(vaultId: string, path: string): Promise<FileEntry>;
@@ -407,7 +520,7 @@ export interface RuntimeCapabilities {
   isWeb: boolean;
 }
 
-export type ModelProviderType = 
+export type ModelProviderType =
   | "codex"
   | "copilot"
   | "opencode"

@@ -152,6 +152,105 @@ test("loads path-keyed vault graph", async () => {
   });
 });
 
+test("creates and builds a publication through canonical routes", async () => {
+  const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).includes("/previews/")) return new Response("<html>preview</html>");
+    if (String(input).endsWith("/unpublish")) return new Response(null, { status: 204 });
+    if (String(input).endsWith("/jobs/job%2Fid")) {
+      return Response.json({ id: "job/id", publicationId: "publication/id", kind: "publish", status: "succeeded" });
+    }
+    if (String(input).endsWith("/publish")) {
+      return Response.json({ id: "job/id", publicationId: "publication/id", kind: "publish", status: "queued" }, { status: 202 });
+    }
+    if (init?.method === "PUT") {
+      return Response.json({ id: "publication", name: "Garden" });
+    }
+    return Response.json({ id: "publication", name: "Garden" }, { status: 201 });
+  });
+  const client = new WebFluxClient("/api/v1", fetchMock as typeof fetch);
+
+  await client.createPublication("vault/id", {
+    name: "Garden",
+    include: ["**/*.md"],
+    exclude: ["private/**"],
+  });
+  await client.updatePublication("vault/id", "publication/id", {
+    name: "Public garden",
+    title: "Public Garden",
+    include: [],
+    exclude: ["private/**"],
+    explicitPaths: ["public.md"],
+  });
+  await client.publishPublication("vault/id", "publication/id");
+  await client.getPublicationJob("vault/id", "publication/id", "job/id");
+  await expect(
+    client.getPublicationPreview("vault/id", "publication/id", "snapshot/id")
+  ).resolves.toContain("preview");
+  await client.unpublishPublication("vault/id", "publication/id");
+
+  expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/v1/vaults/vault%2Fid/publications", {
+    method: "POST",
+    body: JSON.stringify({ name: "Garden", include: ["**/*.md"], exclude: ["private/**"] }),
+    headers: { "Content-Type": "application/json" },
+  });
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/v1/vaults/vault%2Fid/publications/publication%2Fid",
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        name: "Public garden",
+        title: "Public Garden",
+        include: [],
+        exclude: ["private/**"],
+        explicitPaths: ["public.md"],
+      }),
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    3,
+    "/api/v1/vaults/vault%2Fid/publications/publication%2Fid/publish",
+    { method: "POST", headers: { "Content-Type": "application/json" } }
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    5,
+    "/api/v1/vaults/vault%2Fid/publications/publication%2Fid/previews/snapshot%2Fid"
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    6,
+    "/api/v1/vaults/vault%2Fid/publications/publication%2Fid/unpublish",
+    { method: "POST", headers: { "Content-Type": "application/json" } }
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    4,
+    "/api/v1/vaults/vault%2Fid/publications/publication%2Fid/jobs/job%2Fid",
+    { headers: { "Content-Type": "application/json" } }
+  );
+});
+
+test("sets up a managed publishing connector", async () => {
+  const fetchMock = mock(async () =>
+    Response.json({
+      provider: "vercel",
+      command: "vercel",
+      available: true,
+      authenticated: false,
+      managed: true,
+    })
+  );
+  const client = new WebFluxClient("/api/v1", fetchMock as typeof fetch);
+
+  await expect(client.setupPublicationConnector("vercel")).resolves.toMatchObject({
+    provider: "vercel",
+    managed: true,
+  });
+  expect(fetchMock).toHaveBeenCalledWith("/api/v1/publishing/connectors/vercel/setup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+});
+
 test("queries indexed sidebar data", async () => {
   const fetchMock = mock(async (input: RequestInfo | URL) => {
     const url = String(input);

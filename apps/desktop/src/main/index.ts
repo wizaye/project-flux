@@ -7,12 +7,15 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  shell,
   Tray,
   type WebContents,
 } from "electron";
 import { autoUpdater } from "electron-updater";
 import { spawn, type ChildProcess } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { access, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import * as path from "path";
 
@@ -20,6 +23,7 @@ let mainWindow: BrowserWindow | null = null;
 let quickCaptureWindow: BrowserWindow | null = null;
 let menuBarTray: Tray | null = null;
 let backendProcess: ChildProcess | null = null;
+let publicationPreviewServer: Server | null = null;
 const vaultEventStreams = new Map<string, AbortController>();
 const closeReadyWindows = new Set<number>();
 const closePendingWindows = new Set<number>();
@@ -530,6 +534,8 @@ app.on("before-quit", (event) => {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  publicationPreviewServer?.close();
+  publicationPreviewServer = null;
   // Shared runtime may still serve MCP clients after Electron closes.
   if (backendHeartbeat) clearInterval(backendHeartbeat);
   backendHeartbeat = null;
@@ -742,4 +748,84 @@ ipcMain.handle("open-window", (_event, target: unknown) => {
     throw new Error("Window URL must use the app bundle");
   }
   createWindow(target);
+});
+
+ipcMain.handle("open-publication-preview", async (_event, target: unknown) => {
+  if (typeof target !== "string") throw new TypeError("Invalid publication preview path");
+  const sitePath = await realpath(target);
+  const parts = sitePath.split(path.sep);
+  const marker = parts.lastIndexOf(".flux");
+  if (
+    marker < 0 ||
+    parts[marker + 1] !== "cache" ||
+    parts[marker + 2] !== "publish" ||
+    path.basename(sitePath) !== "site" ||
+    !/^[a-f0-9]{64}$/.test(path.basename(path.dirname(sitePath)))
+  ) {
+    throw new Error("Invalid publication preview path");
+  }
+  const previewFile = path.join(sitePath, "index.html");
+  await access(previewFile);
+  publicationPreviewServer?.close();
+  publicationPreviewServer = createServer(async (request, response) => {
+    try {
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        response.writeHead(405).end();
+        return;
+      }
+      const pathname = decodeURIComponent(new URL(request.url ?? "/", "http://localhost").pathname);
+      const requestedPath = path.resolve(sitePath, `.${pathname}`);
+      if (requestedPath !== sitePath && !requestedPath.startsWith(`${sitePath}${path.sep}`)) {
+        response.writeHead(403).end();
+        return;
+      }
+      let filePath = requestedPath;
+      let info = await stat(filePath).catch(() => null);
+      if (info?.isDirectory()) {
+        filePath = path.join(filePath, "index.html");
+        info = await stat(filePath).catch(() => null);
+      } else if (!info && !path.extname(filePath)) {
+        filePath += ".html";
+        info = await stat(filePath).catch(() => null);
+      }
+      if (!info?.isFile()) {
+        response.writeHead(404).end();
+        return;
+      }
+      const contentType =
+        ({
+          ".css": "text/css; charset=utf-8",
+          ".html": "text/html; charset=utf-8",
+          ".ico": "image/x-icon",
+          ".jpeg": "image/jpeg",
+          ".jpg": "image/jpeg",
+          ".js": "text/javascript; charset=utf-8",
+          ".json": "application/json; charset=utf-8",
+          ".png": "image/png",
+          ".svg": "image/svg+xml",
+          ".txt": "text/plain; charset=utf-8",
+          ".webp": "image/webp",
+          ".woff": "font/woff",
+          ".woff2": "font/woff2",
+        } as Record<string, string>)[path.extname(filePath).toLowerCase()] ??
+        "application/octet-stream";
+      response.writeHead(200, {
+        "Cache-Control": "no-store",
+        "Content-Length": info.size,
+        "Content-Type": contentType,
+        "X-Content-Type-Options": "nosniff",
+      });
+      if (request.method === "HEAD") response.end();
+      else createReadStream(filePath).pipe(response);
+    } catch {
+      response.writeHead(400).end();
+    }
+  });
+  await new Promise<void>((resolve, reject) => {
+    publicationPreviewServer!.once("error", reject);
+    publicationPreviewServer!.listen(0, "127.0.0.1", resolve);
+  });
+  const address = publicationPreviewServer.address();
+  if (!address || typeof address === "string") throw new Error("Publication preview failed to start");
+  await shell.openExternal(`http://127.0.0.1:${address.port}/`);
 });

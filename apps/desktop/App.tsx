@@ -36,6 +36,8 @@ const desktopRuntime: FluxRuntime = {
   },
   getPerformanceStats: async () => window.electronAPI?.getPerformanceStats() ?? null,
   openWindow: async (url) => window.electronAPI?.openWindow(url),
+  openPublicationPreview: async (sitePath) =>
+    window.electronAPI?.openPublicationPreview(sitePath),
   onBeforeShutdown: (handler) => window.electronAPI?.onBeforeClose(handler) ?? (() => undefined),
   exportPdf: async (options) => window.electronAPI?.exportPdf(options) ?? null,
   selectVaultDirectory: async (mode) => window.electronAPI?.selectVaultDirectory(mode) ?? null,

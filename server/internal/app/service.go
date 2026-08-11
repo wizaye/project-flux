@@ -9,11 +9,13 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/flux-pkm/server/internal/domain"
 	"github.com/flux-pkm/server/internal/files"
 	gitadapter "github.com/flux-pkm/server/internal/git"
+	"github.com/flux-pkm/server/internal/publish"
 	"github.com/flux-pkm/server/internal/vault"
 )
 
@@ -27,11 +29,16 @@ const (
 )
 
 type Service struct {
-	vaults *vault.Manager
+	vaults            *vault.Manager
+	publishMu         sync.Mutex
+	publishBuildMu    sync.Mutex
+	publishJobsMu     sync.RWMutex
+	publishJobs       map[string]publish.Job
+	publishJobsLoaded map[string]bool
 }
 
 func NewService(vaults *vault.Manager) *Service {
-	return &Service{vaults: vaults}
+	return &Service{vaults: vaults, publishJobs: make(map[string]publish.Job), publishJobsLoaded: make(map[string]bool)}
 }
 
 func (s *Service) Status() domain.ServerStatus {

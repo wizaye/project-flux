@@ -2320,6 +2320,10 @@ Quartz owns its rendering implementation.
 
 Flux continues to own public selection and semantic filtering.
 
+Flux provisions a pinned official Quartz release in app data on first preview. Users do
+not create or select a Quartz project. Only the sanitized snapshot `content/` directory
+is passed to `quartz build --directory`; the managed toolchain is reusable derived state.
+
 ---
 
 ## 50.3 Flowershow Adapter
@@ -2336,9 +2340,20 @@ Flowershow-compatible content
 
 Same privacy boundary.
 
+Flowershow publishing uses its official `fl` binary, pinned and checksum-verified in app
+data. Setup opens the provider's browser login; credentials remain in Flowershow's native
+credential store. Re-publish calls the same idempotent folder command.
+
+## 50.4 Managed Fumadocs Toolchain
+
+The Fumadocs option uses the pinned official static Next.js template. Flux creates and
+installs it once in app data, copies only the sanitized Markdown snapshot into an isolated
+build workspace, and opens the generated static site in the system browser. No project
+path, framework configuration, or package installation is exposed in the product UI.
+
 ---
 
-## 50.4 Custom Renderer
+## 50.5 Custom Renderer
 
 Initial custom support can simply expose:
 

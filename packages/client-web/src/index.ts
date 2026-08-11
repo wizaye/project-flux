@@ -1,6 +1,7 @@
 import type {
   AppBootstrap,
   CreateFileRequest,
+  CreatePublicationRequest,
   DocumentReferences,
   FileDocument,
   FileEntry,
@@ -12,6 +13,11 @@ import type {
   PatchFileRequest,
   PluginCatalogEntry,
   PluginInstallResult,
+  Publication,
+  PublicationConnector,
+  PublicationDeployment,
+  PublicationJob,
+  UpdatePublicationRequest,
   PurgeResult,
   RecentVault,
   RuntimePluginBundle,
@@ -50,6 +56,17 @@ export class WebFluxClient implements FluxClient {
 
   getStatus() {
     return this.request<ServerStatus>("/status");
+  }
+
+  listPublicationConnectors() {
+    return this.request<PublicationConnector[]>("/publishing/connectors");
+  }
+
+  setupPublicationConnector(provider: PublicationDeployment["provider"]) {
+    return this.request<PublicationConnector>(
+      `/publishing/connectors/${encodeURIComponent(provider)}/setup`,
+      { method: "POST" }
+    );
   }
 
   getBootstrap(windowId: string) {
@@ -110,9 +127,7 @@ export class WebFluxClient implements FluxClient {
   }
 
   getVaultConfig(vaultId: string) {
-    return this.request<Record<string, unknown>>(
-      `/vaults/${encodeURIComponent(vaultId)}/config`
-    );
+    return this.request<Record<string, unknown>>(`/vaults/${encodeURIComponent(vaultId)}/config`);
   }
 
   putVaultConfig(vaultId: string, value: Record<string, unknown>) {
@@ -372,6 +387,64 @@ export class WebFluxClient implements FluxClient {
     return this.request<VaultFacets>(`/vaults/${encodeURIComponent(vaultId)}/facets`);
   }
 
+  listPublications(vaultId: string) {
+    return this.request<Publication[]>(`/vaults/${encodeURIComponent(vaultId)}/publications`);
+  }
+
+  createPublication(vaultId: string, request: CreatePublicationRequest) {
+    return this.request<Publication>(`/vaults/${encodeURIComponent(vaultId)}/publications`, {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  updatePublication(vaultId: string, publicationId: string, request: UpdatePublicationRequest) {
+    return this.request<Publication>(
+      `/vaults/${encodeURIComponent(vaultId)}/publications/${encodeURIComponent(publicationId)}`,
+      { method: "PUT", body: JSON.stringify(request) }
+    );
+  }
+
+  deletePublication(vaultId: string, publicationId: string) {
+    return this.request<void>(
+      `/vaults/${encodeURIComponent(vaultId)}/publications/${encodeURIComponent(publicationId)}`,
+      { method: "DELETE" }
+    );
+  }
+
+  previewPublication(vaultId: string, publicationId: string) {
+    return this.publicationAction(vaultId, publicationId, "preview");
+  }
+
+  publishPublication(vaultId: string, publicationId: string) {
+    return this.publicationAction(vaultId, publicationId, "publish");
+  }
+
+  listPublicationJobs(vaultId: string, publicationId: string) {
+    return this.request<PublicationJob[]>(
+      `/vaults/${encodeURIComponent(vaultId)}/publications/${encodeURIComponent(publicationId)}/jobs`
+    );
+  }
+
+  getPublicationJob(vaultId: string, publicationId: string, jobId: string) {
+    return this.request<PublicationJob>(
+      `/vaults/${encodeURIComponent(vaultId)}/publications/${encodeURIComponent(publicationId)}/jobs/${encodeURIComponent(jobId)}`
+    );
+  }
+
+  getPublicationPreview(vaultId: string, publicationId: string, snapshotId: string) {
+    return this.requestText(
+      `/vaults/${encodeURIComponent(vaultId)}/publications/${encodeURIComponent(publicationId)}/previews/${encodeURIComponent(snapshotId)}`
+    );
+  }
+
+  unpublishPublication(vaultId: string, publicationId: string) {
+    return this.request<void>(
+      `/vaults/${encodeURIComponent(vaultId)}/publications/${encodeURIComponent(publicationId)}/unpublish`,
+      { method: "POST" }
+    );
+  }
+
   async getFileMetadata(vaultId: string, path: string) {
     const query = new URLSearchParams({ path });
     try {
@@ -494,6 +567,23 @@ export class WebFluxClient implements FluxClient {
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     return this.requestURL<T>(`${this.baseURL}${path}`, init);
+  }
+
+  private async requestText(path: string): Promise<string> {
+    const response = await this.fetcher(`${this.baseURL}${path}`);
+    if (!response.ok)
+      throw new FluxClientError(
+        `Flux request failed with status ${response.status}`,
+        response.status
+      );
+    return response.text();
+  }
+
+  private publicationAction(vaultId: string, publicationId: string, action: "preview" | "publish") {
+    return this.request<PublicationJob>(
+      `/vaults/${encodeURIComponent(vaultId)}/publications/${encodeURIComponent(publicationId)}/${action}`,
+      { method: "POST" }
+    );
   }
 
   private async requestURL<T>(url: string, init?: RequestInit): Promise<T> {
