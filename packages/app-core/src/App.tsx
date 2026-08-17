@@ -213,7 +213,7 @@ function sandboxedPluginDocument(html: string) {
   return `<!doctype html><html><head>${policy}</head><body>${html}</body></html>`;
 }
 
-type PluginViewLocation = "modal" | "left-sidebar" | "right-sidebar" | "workspace";
+type PluginViewLocation = "modal" | "left-sidebar" | "right-sidebar" | "workspace" | "editor";
 
 interface OpenPluginView {
   pluginId: string;
@@ -236,6 +236,7 @@ function PluginSurface({
   showHeader?: boolean;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const [isPluginMaximized, setIsPluginMaximized] = useState(false);
   const postTheme = useCallback(() => {
     frameRef.current?.contentWindow?.postMessage(
       {
@@ -257,6 +258,10 @@ function PluginSurface({
       };
       if (message.type === "close_plugin_view") {
         onClose();
+        return;
+      }
+      if (message.type === "toggle_plugin_fullscreen") {
+        setIsPluginMaximized((prev) => !prev);
         return;
       }
       if (
@@ -291,7 +296,7 @@ function PluginSurface({
     return () => observer.disconnect();
   }, [postTheme]);
   return (
-    <section className="flex h-full min-h-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
+    <section className={isPluginMaximized ? "fixed inset-0 z-[999999] bg-background flex flex-col overflow-hidden" : "flex h-full min-h-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground"}>
       {showHeader ? <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b px-3 [border-color:var(--layout-separator)]">
         <h2 className="truncate text-xs font-semibold">{view.title}</h2>
         <button
@@ -308,6 +313,7 @@ function PluginSurface({
         key={`${view.pluginId}:${view.viewId}:${revision}`}
         title={view.title}
         sandbox="allow-scripts"
+        allow="fullscreen"
         srcDoc={sandboxedPluginDocument(view.html)}
         onLoad={postTheme}
         className="min-h-0 w-full flex-1 border-0 bg-sidebar"
@@ -3918,6 +3924,14 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
           data={tab.preview.data}
           mimeType={tab.preview.mimeType}
         />
+      ) : pluginView && pluginViewLocation === "editor" && leafId === activeLeafId ? (
+        <PluginSurface
+          view={pluginView}
+          revision={pluginRuntimeRevision}
+          onClose={() => setPluginView(undefined)}
+          invokeCapability={invokePluginViewCapability}
+          showHeader={false}
+        />
       ) : tab.kind === "browser" ? (
         <BrowserView tab={tab} onClose={() => closeLeafTab(leafId, tab.id)} />
       ) : tab.document ? (
@@ -4868,6 +4882,7 @@ function FluxAppContent({ runtime, windowControlsInset }: FluxAppProps) {
                   key={`${pluginView.pluginId}:${pluginView.viewId}:${pluginRuntimeRevision}`}
                   title={pluginView.title}
                   sandbox="allow-scripts"
+                  allow="fullscreen"
                   srcDoc={sandboxedPluginDocument(pluginView.html)}
                   className="min-h-0 flex-1 bg-background"
                 />

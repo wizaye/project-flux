@@ -47,6 +47,7 @@ export const pluginViewLocations = [
   "left-sidebar",
   "right-sidebar",
   "workspace",
+  "editor",
 ] as const;
 
 export type PluginViewLocation = (typeof pluginViewLocations)[number];

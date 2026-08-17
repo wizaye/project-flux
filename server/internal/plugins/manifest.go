@@ -31,7 +31,7 @@ var supportedCapabilities = map[string]bool{
 }
 
 var supportedViewLocations = map[string]bool{
-	"": true, "modal": true, "left-sidebar": true, "right-sidebar": true, "workspace": true,
+	"": true, "modal": true, "left-sidebar": true, "right-sidebar": true, "workspace": true, "editor": true,
 }
 
 var supportedViewIcons = map[string]bool{
