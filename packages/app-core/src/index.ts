@@ -1,7 +1,7 @@
 export { FluxApp } from "./App";
 export type { FluxAppProps, FluxRuntime } from "./App";
-export { browserStatePersistence, useAppStore } from "./app-state";
-export { createClientStatePersistence } from "./client-state-persistence";
+export { browserStatePersistence, useAppStore } from "./app/state";
+export { createClientStatePersistence } from "./app/client-state-persistence";
 export type {
   AppBootstrapState,
   FluxStatePersistence,
@@ -10,4 +10,4 @@ export type {
   PersistedWorkspaceTab,
   RememberedVault,
   VaultLifecycleState,
-} from "./app-state";
+} from "./app/state";

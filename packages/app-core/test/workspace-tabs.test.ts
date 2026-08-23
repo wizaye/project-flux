@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { createGraphWorkspaceTab } from "../src/workspace-tabs";
+import { createGraphWorkspaceTab } from "../src/workspace/tabs";
 
 test("graph tabs have their own view identity and optional local root", () => {
   expect(createGraphWorkspaceTab(4)).toMatchObject({

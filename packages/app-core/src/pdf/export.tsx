@@ -6,10 +6,10 @@ import {
   DialogPopup,
   DialogTitle,
 } from "@flux/shared-ui/components/ui/dialog";
-import ReadingView from "./reading-view";
-import { splitFrontmatter } from "./frontmatter";
-import type { DemoDocument } from "./markdown-editor";
-import type { PdfExportOptions } from "./App";
+import ReadingView from "../editor/reading-view";
+import { splitFrontmatter } from "../editor/frontmatter";
+import type { DemoDocument } from "../editor/markdown-editor";
+import type { PdfExportOptions } from "../App";
 
 type PageSize = "A4" | "Letter";
 type MarginSize = "compact" | "default" | "wide";

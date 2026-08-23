@@ -1,6 +1,6 @@
 import type { FluxClient } from "@flux/bridge-contract";
 
-import type { FluxStatePersistence, PersistedWorkspaceSession, RememberedVault } from "./app-state";
+import type { FluxStatePersistence, PersistedWorkspaceSession, RememberedVault } from "./state";
 
 function persistedWorkspace(value: unknown): PersistedWorkspaceSession | null {
   if (!value || typeof value !== "object") return null;

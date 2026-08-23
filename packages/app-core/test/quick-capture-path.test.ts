@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { quickCaptureInboxPath } from "../src/quick-capture-path";
+import { quickCaptureInboxPath } from "../src/quick-capture/path";
 
 describe("quick capture inbox path", () => {
   test("joins a filename to the configured inbox folder", () => {

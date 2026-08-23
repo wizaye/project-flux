@@ -47,10 +47,10 @@ import type {
   SearchResult,
   VaultFacets,
 } from "@flux/bridge-contract";
-import type { BookmarkItem } from "./bookmark-store";
-import { getFrontmatterProperties, splitFrontmatter } from "./frontmatter";
-import type { DemoDocument } from "./markdown-editor";
-import { buildLinkIndex, linkedMentionsFor, type DocumentMention } from "./link-index";
+import type { BookmarkItem } from "../bookmarks/store";
+import { getFrontmatterProperties, splitFrontmatter } from "../editor/frontmatter";
+import type { DemoDocument } from "../editor/markdown-editor";
+import { buildLinkIndex, linkedMentionsFor, type DocumentMention } from "../editor/link-index";
 import { VaultExplorer } from "./vault-explorer";
 import { cn } from "@flux/shared-ui";
 

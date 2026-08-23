@@ -30,9 +30,9 @@ import {
   PreviewCardPopup,
   PreviewCardTrigger,
 } from "@flux/shared-ui/components/ui/preview-card";
-import ReadingView from "./reading-view";
-import { splitFrontmatter } from "./frontmatter";
-import type { DemoDocument } from "./markdown-editor";
+import ReadingView from "../editor/reading-view";
+import { splitFrontmatter } from "../editor/frontmatter";
+import type { DemoDocument } from "../editor/markdown-editor";
 
 interface VaultExplorerProps {
   entries: FileEntry[];

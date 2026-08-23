@@ -1,9 +1,9 @@
 import { create } from "zustand";
 
-import type { MarkdownMode } from "./markdown-editor";
-import type { BookmarkItem } from "./bookmark-store";
-import type { WorkspaceNode } from "./workspace-tree";
-import type { LeftPane, RightPane } from "./workspace-sidebars";
+import type { MarkdownMode } from "../editor/markdown-editor";
+import type { BookmarkItem } from "../bookmarks/store";
+import type { WorkspaceNode } from "../workspace/tree";
+import type { LeftPane, RightPane } from "../workspace/sidebars";
 import type { FluxLayoutState } from "@flux/shared-ui/hooks/use-flux-layout";
 
 export type VaultLifecycleState =

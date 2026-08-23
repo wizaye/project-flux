@@ -1,4 +1,4 @@
-import type { DemoDocument, MarkdownMode } from "./markdown-editor";
+import type { DemoDocument, MarkdownMode } from "../editor/markdown-editor";
 
 export interface WorkspaceTab {
   id: number;

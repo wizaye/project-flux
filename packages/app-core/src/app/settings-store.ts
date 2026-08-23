@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo } from "react";
 
-import { useAppStore } from "./app-state";
+import { useAppStore } from "./state";
 
 export interface GeneralSettings {
   launchBehaviour: "last-vault" | "empty" | "vault-picker";

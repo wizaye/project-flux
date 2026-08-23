@@ -7,7 +7,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "@flux/shared-ui/components/ui/dialog";
-import type { BookmarkItem } from "./bookmark-store";
+import type { BookmarkItem } from "./store";
 
 export interface AddBookmarkDialogProps {
   open: boolean;

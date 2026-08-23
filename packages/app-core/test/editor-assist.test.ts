@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { wikilinkCompletionEdit, wikilinkFragment, wikilinkTarget } from "../src/editor-assist";
+import { wikilinkCompletionEdit, wikilinkFragment, wikilinkTarget } from "../src/editor/editor-assist";
 
 describe("wikilink completion", () => {
   test("detects the active query after the last opening brackets", () => {

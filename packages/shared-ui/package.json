@@ -26,8 +26,8 @@
     "@fontsource-variable/inter": "^5.2.8",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "lucide-react": "^1.24.0",
-    "motion": "^12.42.2",
+    "lucide-react": "^1.33.0",
+    "motion": "^13.1.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0"
   },

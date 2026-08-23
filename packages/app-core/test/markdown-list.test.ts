@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { listIndentWidth, nestedOrderedMarkerEdit } from "../src/markdown-list";
+import { listIndentWidth, nestedOrderedMarkerEdit } from "../src/editor/markdown-list";
 
 test("indents nested lists to the parent content column", () => {
   expect(listIndentWidth("- child", ["1. parent"], 2, false)).toBe(3);

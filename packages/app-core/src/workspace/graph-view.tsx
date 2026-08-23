@@ -32,8 +32,8 @@ import {
 import { MenuItem } from "@flux/shared-ui/components/ui/menu";
 import { Application, BitmapText, Color, Container, Graphics, Rectangle } from "pixi.js";
 import { FluxEditorPane } from "@flux/shared-ui/components/workspace-tab";
-import type { DemoDocument } from "./markdown-editor";
-import { buildLinkIndex, linkedTitles } from "./link-index";
+import type { DemoDocument } from "../editor/markdown-editor";
+import { buildLinkIndex, linkedTitles } from "../editor/link-index";
 import type { VaultGraph } from "@flux/bridge-contract";
 
 interface GraphViewProps {

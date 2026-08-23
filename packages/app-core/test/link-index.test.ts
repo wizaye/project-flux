@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildLinkIndex, linkedMentionsFor, unlinkedMentionsFor } from "../src/link-index";
-import type { DemoDocument } from "../src/markdown-editor";
+import { buildLinkIndex, linkedMentionsFor, unlinkedMentionsFor } from "../src/editor/link-index";
+import type { DemoDocument } from "../src/editor/markdown-editor";
 
 const documents: DemoDocument[] = [
   { title: "Target", path: "notes/Target.md", content: "# Target\n" },

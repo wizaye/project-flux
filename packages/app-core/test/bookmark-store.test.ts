@@ -5,7 +5,7 @@ import {
   loadBookmarkGroups,
   saveBookmarkGroups,
   type BookmarkItem,
-} from "../src/bookmark-store";
+} from "../src/bookmarks/store";
 
 describe("bookmark-store", () => {
   test("loadBookmarks returns default empty array when empty", () => {
