@@ -1,0 +1,33 @@
+# Root-level .dockerignore — used by Dockerfile.web build context
+
+# Version control
+.git
+.gitignore
+
+# Node / Bun
+node_modules
+**/node_modules
+**/.turbo
+.cache
+
+# Build outputs (we build inside Docker)
+**/dist
+apps/desktop
+
+# Go server (not needed for the web build)
+server
+
+# OS / IDE
+.DS_Store
+.vscode
+.idea
+**/*.swp
+**/*.swo
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Docker artefacts
+docker-compose.override.yml
