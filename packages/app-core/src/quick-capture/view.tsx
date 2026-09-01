@@ -241,11 +241,11 @@ export function QuickCapture({ runtime }: { runtime: FluxRuntime }) {
           </p>
           <Button
             size="sm"
-            loading={saving}
+            disabled={saving}
             onClick={() => void save()}
             className="shadow-none before:shadow-none"
           >
-            Save note
+            {saving ? "Saving…" : "Save note"}
           </Button>
         </div>
       </div>

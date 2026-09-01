@@ -31,16 +31,17 @@ import {
 } from "lucide-react";
 import {
   AlertDialog,
-  AlertDialogClose,
+  AlertDialogAction,
+  AlertDialogCancel,
   AlertDialogDescription,
-  AlertDialogPopup,
+  AlertDialogContent,
   AlertDialogTitle,
 } from "@flux/shared-ui/components/ui/alert-dialog";
 import {
-  PreviewCard,
-  PreviewCardPopup,
-  PreviewCardTrigger,
-} from "@flux/shared-ui/components/ui/preview-card";
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@flux/shared-ui/components/ui/hover-card";
 import type {
   DocumentReferences,
   FileEntry,
@@ -224,13 +225,13 @@ function FileRow({
     .join(" • ");
 
   return (
-    <PreviewCard
+    <HoverCard
       open={previewOpen}
       onOpenChange={(open) => {
         if (!open) setPreviewOpen(false);
       }}
     >
-      <PreviewCardTrigger
+      <HoverCardTrigger
         render={<button
           type="button"
           role="treeitem"
@@ -266,8 +267,8 @@ function FileRow({
       >
         <Files className="size-3.5 shrink-0" />
         <span className="min-w-0 flex-1 truncate">{document.title}</span>
-      </PreviewCardTrigger>
-        <PreviewCardPopup
+      </HoverCardTrigger>
+        <HoverCardContent
           side="right"
           align="start"
           sideOffset={8}
@@ -278,8 +279,8 @@ function FileRow({
           <p className="mt-3 line-clamp-6 text-xs leading-5 text-muted-foreground">
             {summary.preview || "Empty note"}
           </p>
-        </PreviewCardPopup>
-    </PreviewCard>
+        </HoverCardContent>
+    </HoverCard>
   );
 }
 
@@ -462,8 +463,7 @@ function FileExplorer({
         open={Boolean(pendingMove)}
         onOpenChange={(open) => !open && setPendingMove(undefined)}
       >
-          <AlertDialogPopup
-            bottomStickOnMobile={false}
+          <AlertDialogContent
             className="w-[min(420px,calc(100vw-2rem))] rounded-xl p-5"
           >
             <AlertDialogTitle className="text-sm font-semibold">Move file?</AlertDialogTitle>
@@ -473,17 +473,17 @@ function FileExplorer({
                 : `Move “${pendingMove?.title ?? "file"}” before “${pendingMove?.kind === "reorder" ? pendingMove.before : "file"}”?`}
             </AlertDialogDescription>
             <div className="mt-5 flex justify-end gap-2">
-              <AlertDialogClose className="rounded-md px-3 py-1.5 text-sm hover:bg-accent">
+              <AlertDialogCancel className="rounded-md px-3 py-1.5 text-sm hover:bg-accent">
                 Cancel
-              </AlertDialogClose>
-              <AlertDialogClose
+              </AlertDialogCancel>
+              <AlertDialogAction
                 onClick={confirmMove}
                 className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground"
               >
                 Move
-              </AlertDialogClose>
+              </AlertDialogAction>
             </div>
-          </AlertDialogPopup>
+          </AlertDialogContent>
       </AlertDialog>
     </>
   );

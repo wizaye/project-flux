@@ -4,7 +4,7 @@ import {
   Dialog,
   DialogClose,
   DialogDescription,
-  DialogPopup,
+  DialogContent,
   DialogTitle,
 } from "@flux/shared-ui/components/ui/dialog";
 import type { BookmarkItem } from "./store";
@@ -81,8 +81,7 @@ export function AddBookmarkDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogPopup
-          bottomStickOnMobile={false}
+        <DialogContent
           showCloseButton={false}
           className="w-[min(460px,calc(100vw-2rem))] rounded-xl p-5"
         >
@@ -202,7 +201,7 @@ export function AddBookmarkDialog({
               </button>
             </div>
           </div>
-        </DialogPopup>
+        </DialogContent>
     </Dialog>
   );
 }

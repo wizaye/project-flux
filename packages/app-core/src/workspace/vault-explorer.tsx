@@ -15,21 +15,21 @@ import * as m from "motion/react-m";
 import {
   ContextMenu,
   ContextMenuItem,
-  ContextMenuPopup,
+  ContextMenuContent,
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@flux/shared-ui/components/ui/context-menu";
 import {
   Dialog,
   DialogDescription,
-  DialogPopup,
+  DialogContent,
   DialogTitle,
 } from "@flux/shared-ui/components/ui/dialog";
 import {
-  PreviewCard,
-  PreviewCardPopup,
-  PreviewCardTrigger,
-} from "@flux/shared-ui/components/ui/preview-card";
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@flux/shared-ui/components/ui/hover-card";
 import ReadingView from "../editor/reading-view";
 import { splitFrontmatter } from "../editor/frontmatter";
 import type { DemoDocument } from "../editor/markdown-editor";
@@ -405,16 +405,15 @@ export function VaultExplorer({
       <div key={entry.path}>
         <ContextMenu>
           <ContextMenuTrigger render={<div className="contents" />}>
-            <PreviewCard
+            <HoverCard
               open={preview?.path === entry.path}
               onOpenChange={(open) => !open && hidePreview(entry.path)}
             >
-              <PreviewCardTrigger render={row} />
-              <PreviewCardPopup
+              <HoverCardTrigger render={row} />
+              <HoverCardContent
                 side="right"
                 align="start"
                 sideOffset={10}
-                collisionPadding={12}
                 className="z-[160] w-[30rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md p-0"
               >
                 <div className="grid grid-cols-[3px_minmax(0,1fr)] border-b [border-color:var(--layout-separator)]">
@@ -446,10 +445,10 @@ export function VaultExplorer({
                     <p className="p-4 text-xs text-muted-foreground">Empty file</p>
                   )}
                 </div>
-              </PreviewCardPopup>
-            </PreviewCard>
+              </HoverCardContent>
+            </HoverCard>
           </ContextMenuTrigger>
-            <ContextMenuPopup className="z-[150] min-w-44">
+            <ContextMenuContent className="z-[150] min-w-44">
               {directory ? (
                 <>
                   <ContextMenuItem
@@ -490,7 +489,7 @@ export function VaultExplorer({
               >
                 Move to trash
               </ContextMenuItem>
-            </ContextMenuPopup>
+            </ContextMenuContent>
         </ContextMenu>
         {directory ? (
           <AnimatePresence initial={false}>
@@ -622,7 +621,7 @@ export function VaultExplorer({
       </div>
       {dialog ? (
         <Dialog open onOpenChange={(open) => !open && setDialog(undefined)}>
-          <DialogPopup bottomStickOnMobile={false} showCloseButton={false} className="max-w-sm p-5">
+          <DialogContent showCloseButton={false} className="max-w-sm p-5">
             <DialogTitle className="text-sm font-semibold">Move to folder</DialogTitle>
             <DialogDescription className="sr-only">
               Enter destination folder or leave blank for vault root.
@@ -654,7 +653,7 @@ export function VaultExplorer({
                 Move
               </button>
             </div>
-          </DialogPopup>
+          </DialogContent>
         </Dialog>
       ) : null}
     </div>

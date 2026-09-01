@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogClose,
-  DialogPopup,
+  DialogContent,
   DialogTitle,
 } from "@flux/shared-ui/components/ui/dialog";
 import {
@@ -1233,8 +1233,7 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogPopup
-          bottomStickOnMobile={false}
+        <DialogContent
           showCloseButton={false}
           className="h-[min(680px,calc(100vh-4rem))] w-[min(900px,calc(100vw-4rem))] max-w-none flex-row overflow-hidden rounded-xl"
           aria-describedby={undefined}
@@ -1282,7 +1281,7 @@ export function SettingsDialog({
               <ActivePageComponent vaultName={vaultName} />
             )}
           </div>
-        </DialogPopup>
+        </DialogContent>
     </Dialog>
   );
 }

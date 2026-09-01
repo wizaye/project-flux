@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flux-pkm/server/internal/agent"
 	"github.com/flux-pkm/server/internal/api"
 	application "github.com/flux-pkm/server/internal/app"
 	"github.com/flux-pkm/server/internal/appdata"
@@ -97,6 +99,37 @@ func main() {
 		// Continue without model providers service - it's not critical for basic functionality
 		modelProviderService = nil
 	}
+	var agentService *agent.Service
+	// Hosted agent execution stays off until the web app has real user authentication.
+	if cfg.Environment != "production" || cfg.DesktopToken != "" {
+		agentService, err = agent.NewService(appData.Database(), func(vaultID string) (string, error) {
+			if path, pathErr := appService.VaultPath(vaultID); pathErr == nil {
+				return path, nil
+			}
+			recent, recentErr := appData.RecentVaults()
+			if recentErr != nil {
+				return "", recentErr
+			}
+			for _, item := range recent {
+				if item.VaultID != vaultID {
+					continue
+				}
+				info, openErr := appService.OpenVault(item.Path)
+				if openErr != nil {
+					return "", openErr
+				}
+				if info.ID != vaultID {
+					return "", fmt.Errorf("vault identity changed for %s", vaultID)
+				}
+				return appService.VaultPath(vaultID)
+			}
+			return "", fmt.Errorf("vault %s is not registered", vaultID)
+		})
+		if err != nil {
+			log.Fatalf("Failed to initialize agent service: %v", err)
+		}
+		defer agentService.Close()
+	}
 
 	// Set Gin mode
 	if cfg.Environment == "production" || cfg.Environment == "desktop" {
@@ -132,6 +165,9 @@ func main() {
 	routeOptions = append(routeOptions, api.WithAppData(appData), api.WithDesktopToken(cfg.DesktopToken), api.WithPlugins(pluginManager))
 	if modelProviderService != nil {
 		routeOptions = append(routeOptions, api.WithModelProviders(modelProviderService))
+	}
+	if agentService != nil {
+		routeOptions = append(routeOptions, api.WithAgent(agentService))
 	}
 	api.RegisterRoutes(router, appService, routeOptions...)
 

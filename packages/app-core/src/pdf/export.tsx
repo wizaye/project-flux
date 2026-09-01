@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Dialog,
   DialogClose,
   DialogDescription,
-  DialogPopup,
+  DialogContent,
   DialogTitle,
 } from "@flux/shared-ui/components/ui/dialog";
 import ReadingView from "../editor/reading-view";
@@ -79,21 +80,28 @@ export function PdfExportDialog({
   };
   const body = splitFrontmatter(document.content).body;
   const pageRule = `${pageSize} ${landscape ? "landscape" : "portrait"}`;
-
-  return (
+  const printDocument = (
     <>
-      <style media="print">{`@page { size: ${pageRule}; margin: ${marginMillimetres[margin]}mm; }`}</style>
+      <style media="print">{`@page { size: ${pageRule}; margin: 0; }`}</style>
       <div
         className="flux-print-document"
-        style={{ "--flux-print-scale": `${onExport ? 1 : scale / 100}` } as React.CSSProperties}
+        style={{
+          "--flux-print-scale": `${onExport ? 1 : scale / 100}`,
+          "--flux-print-margin": `${marginMillimetres[margin]}mm`,
+        } as React.CSSProperties}
         aria-hidden="true"
       >
         {includeTitle ? <h1 className="flux-print-title">{document.title}</h1> : null}
         <ReadingView value={body} documents={documents} />
       </div>
+    </>
+  );
+
+  return (
+    <>
+      {typeof window === "undefined" ? null : createPortal(printDocument, window.document.body)}
       <Dialog open={open} onOpenChange={onOpenChange}>
-          <DialogPopup
-            bottomStickOnMobile={false}
+          <DialogContent
             showCloseButton={false}
             className="w-[min(500px,calc(100vw-2rem))] rounded-xl p-5"
           >
@@ -172,7 +180,7 @@ export function PdfExportDialog({
                 {exporting ? "Exporting…" : "Export to PDF"}
               </button>
             </div>
-          </DialogPopup>
+          </DialogContent>
       </Dialog>
     </>
   );

@@ -2672,6 +2672,7 @@ export function useFluxAppController({ runtime }: Pick<FluxAppProps, "runtime">)
   } = useDailyNotes({
     client: runtime.client,
     vault,
+    files: fileEntries,
     refreshFiles: () => refreshFiles(),
     openDocument,
     onStatus: setStatus,

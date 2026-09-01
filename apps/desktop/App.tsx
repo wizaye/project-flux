@@ -3,6 +3,15 @@ import { DesktopFluxClient } from "@flux/client-desktop";
 
 const client = window.electronAPI ? new DesktopFluxClient(window.electronAPI) : null;
 const statePersistence = client ? createClientStatePersistence(client) : undefined;
+const simulatedUpdate = import.meta.env.DEV
+  ? {
+      currentVersion: "0.0.1",
+      latestVersion: "0.1.0",
+      codename: "Atlas",
+      releaseNotes:
+        "What's new\n\n• VS Code-style update notifications\n• Release notes inside the app\n• Cleaner workbench interactions",
+    }
+  : undefined;
 
 const desktopRuntime: FluxRuntime = {
   label: "Desktop",
@@ -35,6 +44,15 @@ const desktopRuntime: FluxRuntime = {
     return response === "pong" ? "Electron bridge connected" : response;
   },
   getPerformanceStats: async () => window.electronAPI?.getPerformanceStats() ?? null,
+  checkForUpdates: async () =>
+    simulatedUpdate ?? window.electronAPI?.checkForUpdates() ?? { currentVersion: "development" },
+  downloadUpdate: async () => {
+    if (!simulatedUpdate) await window.electronAPI?.downloadUpdate();
+  },
+  installUpdate: async () => {
+    if (!simulatedUpdate) await window.electronAPI?.installUpdate();
+  },
+  onUpdateStatus: (handler) => window.electronAPI?.onUpdateStatus(handler) ?? (() => undefined),
   openWindow: async (url) => window.electronAPI?.openWindow(url),
   onBeforeShutdown: (handler) => window.electronAPI?.onBeforeClose(handler) ?? (() => undefined),
   exportPdf: async (options) => window.electronAPI?.exportPdf(options) ?? null,
@@ -42,5 +60,5 @@ const desktopRuntime: FluxRuntime = {
 };
 
 export default function App() {
-  return <FluxApp runtime={desktopRuntime} />;
+  return <FluxApp runtime={desktopRuntime} windowControlsInset={72} />;
 }

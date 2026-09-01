@@ -8,10 +8,14 @@ interface Window {
     getMCPServerCommand: () => Promise<{ command: string; args: string[] }>;
     onCommand: (handler: (command: string) => void) => () => void;
     checkForUpdates: () => Promise<{
-      isDev: boolean;
-      isPackaged: boolean;
-      error?: string;
+      currentVersion: string;
+      latestVersion?: string;
+      releaseNotes?: string;
+      codename?: string;
     }>;
+    downloadUpdate: () => Promise<void>;
+    installUpdate: () => Promise<void>;
+    onUpdateStatus: (handler: (status: import("@flux/app-core").UpdateRuntimeStatus) => void) => () => void;
     getAppVersion: () => Promise<string>;
     getPerformanceStats: () => Promise<{
       cpuPercent: number;
@@ -43,6 +47,12 @@ interface Window {
       vaultId: string,
       onChange: (change: import("@flux/bridge-contract").VaultChange) => void,
       onError?: (message: string) => void
+    ) => () => void;
+    watchAgentThread: (
+      threadId: string,
+      onEvent: (event: import("@flux/bridge-contract").AgentEvent) => void,
+      onError?: (message: string) => void,
+      afterSequence?: number
     ) => () => void;
   };
 }

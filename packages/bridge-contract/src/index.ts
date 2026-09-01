@@ -397,6 +397,38 @@ export interface FluxClient {
   updateModelProvider(providerId: string, config: Record<string, unknown>): Promise<void>;
   listAIRuntimes(): Promise<AIRuntime[]>;
   getAIRuntime(runtimeId: string): Promise<AIRuntime>;
+  listAgentProviders(): Promise<import("./agent").AgentProvider[]>;
+  createAgentThread(
+    request: import("./agent").CreateAgentThreadRequest
+  ): Promise<import("./agent").AgentThread>;
+  listAgentThreads(vaultId: string): Promise<import("./agent").AgentThread[]>;
+  getAgentThread(threadId: string): Promise<import("./agent").AgentThread>;
+  renameAgentThread(threadId: string, title: string): Promise<import("./agent").AgentThread>;
+  updateAgentThreadConfiguration(
+    threadId: string,
+    configuration: import("./agent").AgentConfiguration
+  ): Promise<import("./agent").AgentThread>;
+  listAgentEvents(
+    threadId: string,
+    afterSequence?: number
+  ): Promise<import("./agent").AgentEvent[]>;
+  deleteAgentThread(threadId: string): Promise<void>;
+  startAgentTurn(
+    threadId: string,
+    request: import("./agent").StartAgentTurnRequest
+  ): Promise<import("./agent").AgentTurn>;
+  interruptAgentTurn(threadId: string, turnId: string): Promise<void>;
+  respondAgentApproval(
+    threadId: string,
+    requestId: string,
+    optionId: string
+  ): Promise<void>;
+  watchAgentThread(
+    threadId: string,
+    onEvent: (event: import("./agent").AgentEvent) => void,
+    onError?: (error: Error) => void,
+    afterSequence?: number
+  ): () => void;
 }
 
 export interface RuntimeCapabilities {
@@ -407,7 +439,7 @@ export interface RuntimeCapabilities {
   isWeb: boolean;
 }
 
-export type ModelProviderType = 
+export type ModelProviderType =
   | "codex"
   | "copilot"
   | "opencode"
@@ -451,3 +483,4 @@ export interface AIRuntime {
   capabilities: AIRuntimeCapabilities;
   config: Record<string, unknown>;
 }
+export * from "./agent";

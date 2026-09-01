@@ -10,21 +10,28 @@ import {
   Tray,
   type WebContents,
 } from "electron";
-import { autoUpdater } from "electron-updater";
+import { autoUpdater, type ProgressInfo, type UpdateInfo } from "electron-updater";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import * as path from "path";
+import { formatReleaseNotes } from "./update-notes";
+import { installUpdate, getPlatformInstaller } from "./installer";
+
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
 
 let mainWindow: BrowserWindow | null = null;
 let quickCaptureWindow: BrowserWindow | null = null;
 let menuBarTray: Tray | null = null;
 let backendProcess: ChildProcess | null = null;
-const vaultEventStreams = new Map<string, AbortController>();
+const eventStreams = new Map<string, AbortController>();
 const closeReadyWindows = new Set<number>();
 const closePendingWindows = new Set<number>();
 let quitAfterFlush = false;
 let allowQuit = false;
+let installUpdateAfterFlush = false;
+let latestUpdateInfo: UpdateInfo | null = null;
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -35,6 +42,55 @@ let backendToken = "";
 let backendHeartbeat: ReturnType<typeof setInterval> | null = null;
 let backendStartup: Promise<void> | null = null;
 const backendStartupAttempts = 300;
+
+type UpdateStatus =
+  | { state: "checking" }
+  | { state: "available"; update: ReturnType<typeof updateDetails> }
+  | { state: "not-available"; update: ReturnType<typeof updateDetails> }
+  | { state: "downloading"; percent: number; transferred: number; total: number }
+  | { state: "downloaded"; update: ReturnType<typeof updateDetails> }
+  | { state: "verifying"; update: ReturnType<typeof updateDetails> }
+  | { state: "ready"; update: ReturnType<typeof updateDetails> }
+  | { state: "installing"; update: ReturnType<typeof updateDetails> }
+  | { state: "error"; message: string };
+
+function updateDetails(info: UpdateInfo) {
+  return {
+    currentVersion: app.getVersion(),
+    latestVersion: info.version,
+    codename: info.releaseName || undefined,
+    releaseNotes: formatReleaseNotes(info.releaseNotes),
+  };
+}
+
+function sendUpdateStatus(status: UpdateStatus) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.webContents.isDestroyed()) window.webContents.send("update-status", status);
+  }
+}
+
+autoUpdater.on("checking-for-update", () => sendUpdateStatus({ state: "checking" }));
+autoUpdater.on("update-available", (info) =>
+  sendUpdateStatus({ state: "available", update: updateDetails(info) })
+);
+autoUpdater.on("update-not-available", (info) =>
+  sendUpdateStatus({ state: "not-available", update: updateDetails(info) })
+);
+autoUpdater.on("download-progress", (progress: ProgressInfo) =>
+  sendUpdateStatus({
+    state: "downloading",
+    percent: progress.percent,
+    transferred: progress.transferred,
+    total: progress.total,
+  })
+);
+autoUpdater.on("update-downloaded", (info) => {
+  latestUpdateInfo = info;
+  sendUpdateStatus({ state: "downloaded", update: updateDetails(info) });
+});
+autoUpdater.on("error", (error) =>
+  sendUpdateStatus({ state: "error", message: error.message })
+);
 
 function fluxAppDataDirectory() {
   return process.env.FLUX_APP_DATA_DIR ?? path.join(app.getPath("appData"), "Flux");
@@ -134,20 +190,18 @@ async function waitForRetry(signal: AbortSignal) {
   });
 }
 
-async function consumeVaultEvents(
+async function consumeServerEvents(
   sender: WebContents,
-  watcherId: string,
-  vaultId: string,
-  signal: AbortSignal
+  url: () => string,
+  signal: AbortSignal,
+  onFrame: (eventName: string | undefined, data: string) => void,
+  onError: (message: string) => void
 ) {
   while (!signal.aborted && !sender.isDestroyed()) {
     try {
-      const response = await fetch(
-        `${backendOrigin}/api/v1/vaults/${encodeURIComponent(vaultId)}/events`,
-        { signal, headers: backendHeaders() }
-      );
+      const response = await fetch(url(), { signal, headers: backendHeaders() });
       if (!response.ok || !response.body) {
-        throw new Error(`Vault event stream failed with status ${response.status}`);
+        throw new Error(`Event stream failed with status ${response.status}`);
       }
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -170,22 +224,60 @@ async function consumeVaultEvents(
             .filter((line) => line.startsWith("data:"))
             .map((line) => line.slice(5).trimStart())
             .join("\n");
-          if (eventName === "revision" && data) {
-            const payload = JSON.parse(data) as { revision?: unknown };
-            if (typeof payload.revision === "number" && !sender.isDestroyed()) {
-              sender.send(`vault-revision:${watcherId}`, payload);
-            }
-          }
+          if (data) onFrame(eventName, data);
           boundary = buffer.indexOf("\n\n");
         }
       }
     } catch (error) {
       if (signal.aborted || sender.isDestroyed()) return;
       const message = error instanceof Error ? error.message : String(error);
-      sender.send(`vault-revision-error:${watcherId}`, message);
+      onError(message);
     }
     await waitForRetry(signal);
   }
+}
+
+function consumeVaultEvents(
+  sender: WebContents,
+  watcherId: string,
+  vaultId: string,
+  signal: AbortSignal
+) {
+  return consumeServerEvents(
+    sender,
+    () => `${backendOrigin}/api/v1/vaults/${encodeURIComponent(vaultId)}/events`,
+    signal,
+    (eventName, data) => {
+      if (eventName !== "revision" || sender.isDestroyed()) return;
+      const payload = JSON.parse(data) as { revision?: unknown };
+      if (typeof payload.revision === "number") sender.send(`vault-revision:${watcherId}`, payload);
+    },
+    (message) => sender.send(`vault-revision-error:${watcherId}`, message)
+  );
+}
+
+function consumeAgentEvents(
+  sender: WebContents,
+  watcherId: string,
+  threadId: string,
+  afterSequence: number,
+  signal: AbortSignal
+) {
+  let sequence = afterSequence;
+  return consumeServerEvents(
+    sender,
+    () =>
+      `${backendOrigin}/api/v1/agent/threads/${encodeURIComponent(threadId)}/events?after=${sequence}`,
+    signal,
+    (eventName, data) => {
+      if (eventName !== "agent" || sender.isDestroyed()) return;
+      const payload = JSON.parse(data) as { sequence?: unknown };
+      if (typeof payload.sequence !== "number") return;
+      sequence = Math.max(sequence, payload.sequence);
+      sender.send(`agent-event:${watcherId}`, payload);
+    },
+    (message) => sender.send(`agent-event-error:${watcherId}`, message)
+  );
 }
 
 async function backendReady() {
@@ -249,9 +341,39 @@ async function ensureBackend() {
   throw new Error("FLUX backend did not become ready");
 }
 
+let pendingUpdateInstallation: Promise<void> | null = null;
+
+async function performUpdateInstallation() {
+  try {
+    const platform = getPlatformInstaller();
+    await installUpdate(platform, {
+      onStateChange: (state, metadata) => {
+        const update = latestUpdateInfo ? updateDetails(latestUpdateInfo) : { currentVersion: app.getVersion() };
+        sendUpdateStatus({
+          state: state as any,
+          update,
+        });
+      },
+      onError: (error) => {
+        console.error("Installation error:", error);
+        sendUpdateStatus({ state: "error", message: error.message });
+      },
+    });
+  } catch (error) {
+    console.error("Failed to install update:", error);
+    // Fall back to regular quit if installation fails
+    app.quit();
+  }
+}
+
 function resumeQuitIfReady() {
   if (!quitAfterFlush || closePendingWindows.size > 0 || allowQuit) return;
   allowQuit = true;
+  if (installUpdateAfterFlush) {
+    // Start the async installation process without waiting
+    pendingUpdateInstallation = performUpdateInstallation();
+    return;
+  }
   app.quit();
 }
 
@@ -296,17 +418,17 @@ function createWindow(targetUrl?: string) {
 
   if (process.platform === "darwin") {
     window.setWindowButtonVisibility(true);
-    window.setWindowButtonPosition({ x: 14, y: 16 });
+    window.setWindowButtonPosition({ x: 14, y: 10 });
   }
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      import('electron').then(({ shell }) => {
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      import("electron").then(({ shell }) => {
         shell.openExternal(url);
       });
-      return { action: 'deny' };
+      return { action: "deny" };
     }
-    return { action: 'allow' };
+    return { action: "allow" };
   });
 
   const loadWindowContent = () => {
@@ -397,7 +519,8 @@ function showMainWindow(command?: string) {
   if (process.platform === "darwin") app.dock?.show();
   const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow();
   const sendCommand = () => command && window.webContents.send("flux-command", command);
-  if (window.webContents.isLoadingMainFrame()) window.webContents.once("did-finish-load", sendCommand);
+  if (window.webContents.isLoadingMainFrame())
+    window.webContents.once("did-finish-load", sendCommand);
   else sendCommand();
   if (window.isMinimized()) window.restore();
   window.show();
@@ -470,7 +593,11 @@ function installApplicationMenu() {
       {
         label: "Navigate",
         submenu: [
-          { label: "Search", accelerator: "CmdOrCtrl+Shift+F", click: () => dispatchCommand("search") },
+          {
+            label: "Search",
+            accelerator: "CmdOrCtrl+Shift+F",
+            click: () => dispatchCommand("search"),
+          },
           { label: "Today's Note", click: () => dispatchCommand("daily-today") },
         ],
       },
@@ -478,7 +605,11 @@ function installApplicationMenu() {
         label: "Workspace",
         submenu: [
           { label: "Calendar", click: () => dispatchCommand("calendar") },
-          { label: "Settings", accelerator: "CmdOrCtrl+,", click: () => dispatchCommand("settings") },
+          {
+            label: "Settings",
+            accelerator: "CmdOrCtrl+,",
+            click: () => dispatchCommand("settings"),
+          },
         ],
       },
       { role: "editMenu" },
@@ -629,13 +760,13 @@ ipcMain.on("watch-vault-revision", (event, request: unknown) => {
     return;
   }
   const key = streamKey(event.sender, value.watcherId);
-  vaultEventStreams.get(key)?.abort();
+  eventStreams.get(key)?.abort();
   const controller = new AbortController();
-  vaultEventStreams.set(key, controller);
+  eventStreams.set(key, controller);
   event.sender.once("destroyed", () => controller.abort());
   void consumeVaultEvents(event.sender, value.watcherId, value.vaultId, controller.signal).finally(
     () => {
-      if (vaultEventStreams.get(key) === controller) vaultEventStreams.delete(key);
+      if (eventStreams.get(key) === controller) eventStreams.delete(key);
     }
   );
 });
@@ -643,8 +774,44 @@ ipcMain.on("watch-vault-revision", (event, request: unknown) => {
 ipcMain.on("unwatch-vault-revision", (event, watcherId: unknown) => {
   if (typeof watcherId !== "string") return;
   const key = streamKey(event.sender, watcherId);
-  vaultEventStreams.get(key)?.abort();
-  vaultEventStreams.delete(key);
+  eventStreams.get(key)?.abort();
+  eventStreams.delete(key);
+});
+
+ipcMain.on("watch-agent-thread", (event, request: unknown) => {
+  if (!request || typeof request !== "object") return;
+  const value = request as { watcherId?: unknown; threadId?: unknown; afterSequence?: unknown };
+  if (
+    typeof value.watcherId !== "string" ||
+    value.watcherId.length > 100 ||
+    typeof value.threadId !== "string" ||
+    value.threadId.length > 100 ||
+    typeof value.afterSequence !== "number" ||
+    !Number.isSafeInteger(value.afterSequence) ||
+    value.afterSequence < 0
+  )
+    return;
+  const key = streamKey(event.sender, value.watcherId);
+  eventStreams.get(key)?.abort();
+  const controller = new AbortController();
+  eventStreams.set(key, controller);
+  event.sender.once("destroyed", () => controller.abort());
+  void consumeAgentEvents(
+    event.sender,
+    value.watcherId,
+    value.threadId,
+    value.afterSequence,
+    controller.signal
+  ).finally(() => {
+    if (eventStreams.get(key) === controller) eventStreams.delete(key);
+  });
+});
+
+ipcMain.on("unwatch-agent-thread", (event, watcherId: unknown) => {
+  if (typeof watcherId !== "string") return;
+  const key = streamKey(event.sender, watcherId);
+  eventStreams.get(key)?.abort();
+  eventStreams.delete(key);
 });
 
 ipcMain.handle("export-pdf", async (event, options: unknown) => {
@@ -681,7 +848,7 @@ ipcMain.handle("export-pdf", async (event, options: unknown) => {
   if (result.canceled || !result.filePath) return null;
   const data = await event.sender.printToPDF({
     scale: value.scale,
-    printBackground: false,
+    printBackground: true,
     preferCSSPageSize: true,
     generateTaggedPDF: true,
     generateDocumentOutline: true,
@@ -691,15 +858,29 @@ ipcMain.handle("export-pdf", async (event, options: unknown) => {
 });
 
 ipcMain.handle("check-for-updates", async () => {
-  if (app.isPackaged) {
-    try {
-      await autoUpdater.checkForUpdatesAndNotify();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { isDev, isPackaged: true, error: message };
+  const currentVersion = app.getVersion();
+  if (!app.isPackaged) return { currentVersion };
+  const result = await autoUpdater.checkForUpdates();
+  return result?.updateInfo ? updateDetails(result.updateInfo) : { currentVersion };
+});
+
+ipcMain.handle("download-update", async () => {
+  if (!app.isPackaged) return;
+  await autoUpdater.downloadUpdate();
+});
+
+ipcMain.handle("install-update", () => {
+  if (!app.isPackaged) return;
+  installUpdateAfterFlush = true;
+  quitAfterFlush = true;
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window === quickCaptureWindow) {
+      window.destroy();
+      continue;
     }
+    requestWindowFlush(window, window.webContents.id);
   }
-  return { isDev, isPackaged: app.isPackaged };
+  resumeQuitIfReady();
 });
 
 ipcMain.handle("get-app-version", async () => {

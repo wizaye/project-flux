@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flux-pkm/server/internal/agent"
 	application "github.com/flux-pkm/server/internal/app"
 	"github.com/flux-pkm/server/internal/appdata"
 	"github.com/flux-pkm/server/internal/domain"
@@ -30,6 +31,7 @@ type Handler struct {
 	desktopToken   string
 	plugins        *plugins.Manager
 	modelProviders *modelproviders.Service
+	agent          *agent.Service
 }
 
 const maxRequestBodyBytes = 50 << 20
@@ -50,6 +52,10 @@ func WithPlugins(manager *plugins.Manager) RouteOption {
 
 func WithModelProviders(service *modelproviders.Service) RouteOption {
 	return func(handler *Handler) { handler.modelProviders = service }
+}
+
+func WithAgent(service *agent.Service) RouteOption {
+	return func(handler *Handler) { handler.agent = service }
 }
 
 func RegisterRoutes(router *gin.Engine, app *application.Service, options ...RouteOption) {
@@ -121,6 +127,9 @@ func RegisterRoutes(router *gin.Engine, app *application.Service, options ...Rou
 	v1.PUT("/model-providers/:providerId", handler.updateModelProvider)
 	v1.GET("/ai-runtimes", handler.listAIRuntimes)
 	v1.GET("/ai-runtimes/:runtimeId", handler.getAIRuntime)
+	if handler.agent != nil {
+		handler.registerAgentRoutes(v1)
+	}
 }
 
 func (h *Handler) vaultConfig(c *gin.Context) {
