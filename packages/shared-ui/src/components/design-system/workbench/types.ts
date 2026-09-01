@@ -75,6 +75,7 @@ export interface VSCodeWorkbenchProps {
   update?: WorkbenchUpdate;
   updateStatus?: WorkbenchUpdateStatus;
   updateProgress?: number;
+  onCheckForUpdates?: () => Promise<void>;
   onDownloadUpdate?: () => Promise<void>;
   onInstallUpdate?: () => Promise<void>;
   onThemeChange: (theme: WorkbenchTheme) => void;

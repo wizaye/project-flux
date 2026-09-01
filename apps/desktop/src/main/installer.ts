@@ -8,7 +8,6 @@
  */
 
 import { app, shell } from "electron";
-import { autoUpdater } from "electron-updater";
 import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
@@ -86,13 +85,10 @@ export async function installUpdate(
  * 6. Done!
  */
 async function installUpdateMacOS(callbacks: InstallerCallbacks): Promise<void> {
-  const updateInfo = autoUpdater.currentVersion;
-  
   try {
-    // Get the cached DMG path from autoUpdater
-    // When autoDownload is disabled, the DMG is cached at a known location
+    // Get the cached DMG path from electron-updater's temp directory
     const updateCachePath = path.join(
-      app.getPath("cache"),
+      app.getPath("temp"),
       "electron-updater"
     );
 

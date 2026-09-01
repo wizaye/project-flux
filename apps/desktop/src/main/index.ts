@@ -20,6 +20,9 @@ import { installUpdate, getPlatformInstaller } from "./installer";
 
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
+if (!app.isPackaged) {
+  autoUpdater.forceDevUpdateConfig = true;
+}
 
 let mainWindow: BrowserWindow | null = null;
 let quickCaptureWindow: BrowserWindow | null = null;
@@ -297,8 +300,9 @@ async function ensureBackend() {
   }
 
   if (isDev) {
-    // Vite main-process reloads must recompile Go instead of reattaching the
-    // healthy daemon built from the previous source revision.
+    // In dev mode, try to reuse an already-running backend first.
+    // Only kill and restart if none is reachable (e.g. first run, or Go source changed).
+    if ((await attachPublishedBackend()) && (await backendReady())) return;
     await stopStalePublishedBackend(true);
   } else {
     if ((await attachPublishedBackend()) && (await backendReady())) return;
@@ -341,14 +345,15 @@ async function ensureBackend() {
   throw new Error("FLUX backend did not become ready");
 }
 
-let pendingUpdateInstallation: Promise<void> | null = null;
 
 async function performUpdateInstallation() {
   try {
     const platform = getPlatformInstaller();
     await installUpdate(platform, {
-      onStateChange: (state, metadata) => {
-        const update = latestUpdateInfo ? updateDetails(latestUpdateInfo) : { currentVersion: app.getVersion() };
+      onStateChange: (state) => {
+        const update = latestUpdateInfo
+          ? updateDetails(latestUpdateInfo)
+          : { currentVersion: app.getVersion(), latestVersion: app.getVersion(), codename: undefined, releaseNotes: undefined };
         sendUpdateStatus({
           state: state as any,
           update,
@@ -371,7 +376,7 @@ function resumeQuitIfReady() {
   allowQuit = true;
   if (installUpdateAfterFlush) {
     // Start the async installation process without waiting
-    pendingUpdateInstallation = performUpdateInstallation();
+    void performUpdateInstallation();
     return;
   }
   app.quit();
@@ -859,18 +864,20 @@ ipcMain.handle("export-pdf", async (event, options: unknown) => {
 
 ipcMain.handle("check-for-updates", async () => {
   const currentVersion = app.getVersion();
-  if (!app.isPackaged) return { currentVersion };
-  const result = await autoUpdater.checkForUpdates();
-  return result?.updateInfo ? updateDetails(result.updateInfo) : { currentVersion };
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return result?.updateInfo ? updateDetails(result.updateInfo) : { currentVersion };
+  } catch (error) {
+    console.error("Failed to check for updates (maybe no GitHub releases yet):", error);
+    return { currentVersion };
+  }
 });
 
 ipcMain.handle("download-update", async () => {
-  if (!app.isPackaged) return;
   await autoUpdater.downloadUpdate();
 });
 
 ipcMain.handle("install-update", () => {
-  if (!app.isPackaged) return;
   installUpdateAfterFlush = true;
   quitAfterFlush = true;
   for (const window of BrowserWindow.getAllWindows()) {

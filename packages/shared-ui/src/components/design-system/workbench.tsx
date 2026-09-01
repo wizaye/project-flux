@@ -142,6 +142,7 @@ export function VSCodeWorkbench({
   update,
   updateStatus,
   updateProgress,
+  onCheckForUpdates,
   onDownloadUpdate,
   onInstallUpdate,
   onThemeChange,
@@ -173,6 +174,8 @@ export function VSCodeWorkbench({
   const { activeActivity, leftOpen, rightOpen, rightMaximized } = workbenchState;
   const [commandOpen, setCommandOpen] = useState(false);
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
+  const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
+  const [noUpdatesAvailable, setNoUpdatesAvailable] = useState(false);
   const [localDownloadStatus, setDownloadStatus] = useState<UpdateDownloadStatus>("available");
   const downloadStatus = updateStatus ?? localDownloadStatus;
   const [selectedPath, setSelectedPath] = useState("AGENTS.md");
@@ -227,29 +230,71 @@ export function VSCodeWorkbench({
     () => new Set(workbenchState.dismissedNotifications),
     [workbenchState.dismissedNotifications]
   );
+
+  // Auto-open release notes when a new update becomes available
+  useEffect(() => {
+    if (updateAvailable) {
+      setNoUpdatesAvailable(false);
+      setReleaseNotesOpen(true);
+    }
+  }, [updateAvailable]);
+
+  // Dismiss "no updates" message after 4 seconds
+  useEffect(() => {
+    if (!noUpdatesAvailable) return;
+    const timer = setTimeout(() => setNoUpdatesAvailable(false), 4000);
+    return () => clearTimeout(timer);
+  }, [noUpdatesAvailable]);
+
   const notifications = useMemo<WorkbenchNotification[]>(() => {
-    if (!updateAvailable || !latestVersion) return [];
-    const id = `update:${latestVersion}`;
-    if (dismissedNotifications.has(id)) return [];
-    return [
-      {
-        id,
-        title: `Flux ${latestVersion} is available`,
-        message:
-          downloadStatus === "downloading"
-            ? "Downloading the update…"
-            : downloadStatus === "ready"
-              ? "Download complete. Restart Flux when you're ready to install it."
-              : downloadStatus === "error"
-                ? "The update could not be downloaded. Retry when you're ready."
-                : `Codename ${update?.codename ?? "Atlas"} is ready to download.`,
+    const items: WorkbenchNotification[] = [];
+    if (noUpdatesAvailable) {
+      items.push({
+        id: "update:no-updates",
+        title: "No updates available",
+        message: `Flux ${update?.currentVersion ?? ""} is up to date.`,
         source: "Flux Update Service",
-      },
-    ];
-  }, [dismissedNotifications, downloadStatus, latestVersion, update?.codename, updateAvailable]);
+      });
+    }
+    if (updateAvailable && latestVersion) {
+      const id = `update:${latestVersion}`;
+      if (!dismissedNotifications.has(id)) {
+        items.push({
+          id,
+          title: `Flux ${latestVersion} is available`,
+          message:
+            downloadStatus === "downloading"
+              ? "Downloading the update…"
+              : downloadStatus === "ready"
+                ? "Download complete. Restart Flux when you're ready to install it."
+                : downloadStatus === "error"
+                  ? "The update could not be downloaded. Retry when you're ready."
+                  : `Codename ${update?.codename ?? "Atlas"} is ready to download.`,
+          source: "Flux Update Service",
+        });
+      }
+    }
+    return items;
+  }, [dismissedNotifications, downloadStatus, latestVersion, noUpdatesAvailable, update?.codename, update?.currentVersion, updateAvailable]);
 
   function updateWorkbench(changes: Partial<WorkbenchState>) {
     setWorkbenchState((current) => ({ ...current, ...changes }));
+  }
+
+  async function checkForUpdates() {
+    if (!onCheckForUpdates || isCheckingForUpdates) return;
+    setIsCheckingForUpdates(true);
+    setNoUpdatesAvailable(false);
+    try {
+      await onCheckForUpdates();
+      // After the await, updateAvailable will reflect the new state on next render.
+      // noUpdatesAvailable is set to true here and cleared by the effect if update arrived.
+      setNoUpdatesAvailable(true);
+    } catch (error) {
+      console.error("Failed to check for updates:", error);
+    } finally {
+      setIsCheckingForUpdates(false);
+    }
   }
 
   function selectActivity(id: string) {
@@ -393,12 +438,13 @@ export function VSCodeWorkbench({
         onCommand={() => setCommandOpen(true)}
         onToggleLeftPane={toggleLeftPane}
         onToggleRightPane={toggleRightPane}
-        updateLabel={updateAvailable ? "Update available" : undefined}
         updateStatus={downloadStatus}
         updateProgress={updateProgress}
+        isCheckingForUpdates={isCheckingForUpdates}
+        onCheckForUpdates={!updateAvailable ? checkForUpdates : undefined}
         onDownloadUpdate={updateAvailable ? () => void downloadUpdate() : undefined}
         onInstallUpdate={updateAvailable ? () => void installUpdate() : undefined}
-        onOpenReleaseNotes={updateAvailable ? openReleaseNotes : undefined}
+        onOpenReleaseNotes={() => setReleaseNotesOpen(true)}
       />
 
       <main id="workbench-content" className="flex min-h-0 min-w-0 gap-1 overflow-hidden pb-1">

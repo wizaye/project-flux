@@ -133,19 +133,7 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
   });
   const changeVaultDocument = vault.changeDocument;
 
-  useEffect(() => {
-    if (!hydrated || !runtime.checkForUpdates) return;
-    let cancelled = false;
-    void runtime
-      .checkForUpdates()
-      .then((nextUpdate) => {
-        if (!cancelled) setUpdate(nextUpdate);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [hydrated, runtime]);
+
 
   useEffect(
     () =>
@@ -182,6 +170,12 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
   );
 
   const handleStateChange = useCallback((next: WorkbenchSnapshot) => setSnapshot(next), []);
+
+  const handleCheckForUpdates = useCallback(async () => {
+    if (!runtime.checkForUpdates) return;
+    const result = await runtime.checkForUpdates();
+    if (result) setUpdate(result);
+  }, [runtime]);
   const renderEditor = useCallback(
     (
       tab: { id: string; title: string; content?: string },
@@ -240,6 +234,7 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
                           : undefined
         }
         updateProgress={updateStatus?.state === "downloading" ? updateStatus.percent : undefined}
+        onCheckForUpdates={runtime.checkForUpdates ? handleCheckForUpdates : undefined}
         onDownloadUpdate={runtime.downloadUpdate}
         onInstallUpdate={runtime.installUpdate}
         onThemeChange={setTheme}
