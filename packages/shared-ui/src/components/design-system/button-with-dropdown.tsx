@@ -64,6 +64,7 @@ export function ButtonGroupDropdown({
   const isDownloaded = displayStatus === "downloaded"
   const isVerifying = displayStatus === "verifying"
   const isReadyToInstall = displayStatus === "ready-to-install"
+  const downloadLabel = typeof progress === "number" ? `Downloading ${Math.round(progress)}%` : "Downloading…"
 
   const handleUpdate = async () => {
     if (displayStatus !== "available" && displayStatus !== "error") return
@@ -134,7 +135,7 @@ export function ButtonGroupDropdown({
         {isDownloading && (
           <>
             <LoaderCircleIcon className="size-3.5 animate-spin" />
-            {typeof progress === "number" ? `Downloading ${Math.round(progress)}%` : "Downloading…"}
+            {downloadLabel}
           </>
         )}
 
@@ -217,7 +218,7 @@ export function ButtonGroupDropdown({
             {isDownloading && (
               <DropdownMenuItem disabled>
                 <LoaderCircleIcon className="animate-spin" />
-                Downloading…
+                {downloadLabel}
               </DropdownMenuItem>
             )}
 

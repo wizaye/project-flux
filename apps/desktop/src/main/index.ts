@@ -37,6 +37,7 @@ let allowQuit = false;
 let installUpdateAfterFlush = false;
 let latestUpdateInfo: UpdateInfo | MacRelease | null = null;
 let downloadedMacInstaller: string | null = null;
+let updateDownload: Promise<void> | null = null;
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -899,6 +900,7 @@ ipcMain.handle("export-pdf", async (event, options: unknown) => {
 });
 
 ipcMain.handle("check-for-updates", async () => {
+  if (updateDownload && latestUpdateInfo) return updateDetails(latestUpdateInfo);
   const currentVersion = app.getVersion();
   try {
     if (process.platform === "darwin") {
@@ -918,19 +920,30 @@ ipcMain.handle("check-for-updates", async () => {
   }
 });
 
-ipcMain.handle("download-update", async () => {
+async function downloadUpdate() {
   if (!latestUpdateInfo) throw new Error("Check for updates before downloading");
   const update = updateDetails(latestUpdateInfo);
-  if (process.platform === "darwin") {
-    if (!("asset" in latestUpdateInfo)) throw new Error("Check for a DMG update first");
-    downloadedMacInstaller = await downloadMacUpdate(latestUpdateInfo, (percent, transferred, total) =>
-      sendUpdateStatus({ state: "downloading", percent, transferred, total })
-    );
-  } else {
-    await autoUpdater.downloadUpdate();
+  sendUpdateStatus({ state: "downloading", percent: 0, transferred: 0, total: "asset" in latestUpdateInfo ? latestUpdateInfo.asset.size : 0 });
+  try {
+    if (process.platform === "darwin") {
+      if (!("asset" in latestUpdateInfo)) throw new Error("Check for a DMG update first");
+      downloadedMacInstaller = await downloadMacUpdate(latestUpdateInfo, (percent, transferred, total) =>
+        sendUpdateStatus({ state: "downloading", percent, transferred, total })
+      );
+    } else {
+      await autoUpdater.downloadUpdate();
+    }
+    sendUpdateStatus({ state: "verifying", update });
+    sendUpdateStatus({ state: "ready", update });
+  } catch (error) {
+    sendUpdateStatus({ state: "error", message: error instanceof Error ? error.message : "Update download failed" });
+    throw error;
   }
-  sendUpdateStatus({ state: "verifying", update });
-  sendUpdateStatus({ state: "ready", update });
+}
+
+ipcMain.handle("download-update", () => {
+  updateDownload ??= downloadUpdate().finally(() => { updateDownload = null; });
+  return updateDownload;
 });
 
 ipcMain.handle("install-update", () => {

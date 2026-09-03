@@ -45,6 +45,7 @@ export function WorkbenchHeader({
   function resolvedDropdownStatus() {
     if (updateStatus === "ready") return "ready-to-install";
     if (
+      updateStatus === "downloading" ||
       updateStatus === "downloaded" ||
       updateStatus === "verifying" ||
       updateStatus === "checking" ||

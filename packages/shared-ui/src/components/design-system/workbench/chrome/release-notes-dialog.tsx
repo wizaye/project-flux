@@ -26,6 +26,7 @@ export interface ReleaseNotesDialogProps {
   open: boolean;
   update?: WorkbenchUpdate;
   downloadStatus: UpdateDownloadStatus;
+  downloadProgress?: number;
   onOpenChange: (open: boolean) => void;
   onDownload: () => void;
 }
@@ -34,6 +35,7 @@ export function ReleaseNotesDialog({
   open,
   update,
   downloadStatus,
+  downloadProgress,
   onOpenChange,
   onDownload,
 }: ReleaseNotesDialogProps) {
@@ -52,7 +54,7 @@ export function ReleaseNotesDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden bg-transparent p-0 ring-0 sm:max-w-lg"
+        className="max-h-[calc(100dvh-2rem)] gap-0 overflow-y-auto bg-transparent p-0 ring-0 sm:max-w-lg"
       >
         <DialogHeader className="sr-only">
           <DialogTitle>Codename {codename}</DialogTitle>
@@ -78,20 +80,29 @@ export function ReleaseNotesDialog({
               </AlertAction>
               <AlertDescription>
                 <p className="mb-2 text-foreground">Build {version}</p>
-                <ScrollArea className="max-h-48">
-                  <div className="whitespace-pre-wrap pe-4 leading-6">{releaseNotes}</div>
+                <ScrollArea className="h-[min(24rem,45dvh)] min-h-0">
+                  <div className="whitespace-pre-wrap break-words pe-4 leading-6">{releaseNotes}</div>
                 </ScrollArea>
                 <Button
                   type="button"
                   variant="link"
                   size="sm"
                   className="h-auto p-0 underline"
-                  disabled={downloadStatus === "downloading" || downloadStatus === "ready"}
+                  disabled={!["available", "error"].includes(downloadStatus)}
+                  aria-live="polite"
                   onClick={onDownload}
                 >
                   {downloadStatus === "downloading"
-                    ? "Downloading…"
-                    : downloadStatus === "ready"
+                    ? typeof downloadProgress === "number"
+                      ? `Downloading ${Math.round(downloadProgress)}%`
+                      : "Downloading…"
+                    : downloadStatus === "verifying"
+                      ? "Verifying package…"
+                    : downloadStatus === "installing"
+                      ? "Installing…"
+                    : downloadStatus === "checking"
+                      ? "Checking for updates…"
+                    : downloadStatus === "ready" || downloadStatus === "downloaded"
                       ? "Downloaded"
                       : downloadStatus === "error"
                         ? "Retry download"

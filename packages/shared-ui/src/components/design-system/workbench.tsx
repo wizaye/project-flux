@@ -688,6 +688,7 @@ export function VSCodeWorkbench({
         open={releaseNotesOpen}
         update={update}
         downloadStatus={downloadStatus}
+        downloadProgress={updateProgress}
         onOpenChange={setReleaseNotesOpen}
         onDownload={() => void downloadUpdate()}
       />
