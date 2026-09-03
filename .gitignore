@@ -24,6 +24,9 @@ dist
 .obsidian/
 .trash/
 **/.*/
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
 
 # Debug
 npm-debug.log*

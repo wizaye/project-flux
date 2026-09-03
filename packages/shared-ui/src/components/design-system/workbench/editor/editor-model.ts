@@ -11,6 +11,15 @@ export type EditorTab = {
 };
 
 export type EditorGroupId = string;
+
+export function documentStatistics(tab?: EditorTab, overrides: { words?: number; characters?: number; backlinks?: number } = {}) {
+  if (!tab?.id.startsWith("file:") || tab.readOnly) return {};
+  return {
+    words: overrides.words ?? (tab.content?.trim().split(/\s+/).filter(Boolean).length ?? 0),
+    characters: overrides.characters ?? (tab.content?.length ?? 0),
+    backlinks: overrides.backlinks,
+  };
+}
 export type SplitPlacement = "left" | "right" | "top" | "bottom";
 
 export type EditorGroupState = {

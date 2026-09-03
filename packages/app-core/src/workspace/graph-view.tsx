@@ -9,40 +9,39 @@ import {
   select,
   zoom,
   zoomIdentity,
-  type SimulationLinkDatum,
-  type SimulationNodeDatum,
   type ZoomTransform,
 } from "d3";
 import {
   Bookmark,
   Camera,
-  ChevronDown,
-  Maximize2,
   PanelBottomOpen,
   PanelRightOpen,
   Plus,
   RotateCcw,
-  Search,
   Settings,
   WandSparkles,
   X,
-  ZoomIn,
-  ZoomOut,
 } from "lucide-react";
 import { MenuItem } from "@flux/shared-ui/components/ui/menu";
 import { Application, BitmapText, Color, Container, Graphics, Rectangle } from "pixi.js";
 import { FluxEditorPane } from "@flux/shared-ui/components/workspace-tab";
 import type { DemoDocument } from "../editor/markdown-editor";
-import { buildLinkIndex, linkedTitles } from "../editor/link-index";
+import { buildGraph, graphNodeRadius, type GraphNode, type GraphLink } from "./graph/model";
+import { GraphSection as ForceSection, GraphSwitch, GraphSlider } from "@flux/shared-ui/components/design-system/graph/graph-controls";
+import { Button } from "@flux/shared-ui/components/ui/button";
+import { Input } from "@flux/shared-ui/components/ui/input";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@flux/shared-ui/components/ui/context-menu";
 import type { VaultGraph } from "@flux/bridge-contract";
 
 interface GraphViewProps {
+  embedded?: boolean;
   documents: DemoDocument[];
   vaultGraph?: VaultGraph | null;
   activePath?: string;
   bookmarked: boolean;
   onBookmarkChange: (value: boolean) => void;
   onOpenDocument: (title: string) => void;
+  onSearchTag?: (tag: string) => void;
   onSplitRight: () => void;
   onSplitDown: () => void;
 }
@@ -78,19 +77,6 @@ function GraphViewMenu({
   );
 }
 
-interface GraphNode extends SimulationNodeDatum {
-  id: string;
-  title: string;
-  kind: "file" | "tag" | "attachment" | "missing";
-  connected: boolean;
-  path?: string;
-}
-
-interface GraphLink extends SimulationLinkDatum<GraphNode> {
-  source: string | GraphNode;
-  target: string | GraphNode;
-}
-
 interface GraphDrag {
   node: GraphNode;
   pointerId: number;
@@ -106,7 +92,6 @@ interface GraphDrag {
 
 const WIDTH = 960;
 const HEIGHT = 640;
-const TAGS_PATTERN = /(?:^|\n)tags:\s*\[([^\]]+)\]/i;
 
 interface PixiGraphScene {
   app: Application;
@@ -118,143 +103,21 @@ interface PixiGraphScene {
   labelColor: number;
 }
 
-function graphNodeRadius(node: GraphNode, degree: number, scale = 1) {
-  const baseRadius = node.kind === "tag" ? 3.2 : 2.8;
-  const rankGrowth = Math.min(16, Math.log2(degree + 1) * 2.5);
-  return (baseRadius + rankGrowth) * scale;
-}
-
-function tagsFor(content: string) {
-  const inlineTags = [...content.matchAll(/(^|\s)#([\w/-]+)/g)].map((match) => match[2]);
-  const frontmatterTags =
-    content
-      .match(TAGS_PATTERN)?.[1]
-      ?.split(",")
-      .map((tag) => tag.trim()) ?? [];
-  return [...new Set([...inlineTags, ...frontmatterTags].filter(Boolean))];
-}
-
-function buildGraph(
-  documents: DemoDocument[],
-  vaultGraph: VaultGraph | null | undefined,
-  activePath: string | undefined,
-  showTags: boolean,
-  showAttachments: boolean,
-  existingFilesOnly: boolean
-) {
-  const edges = new Map<string, GraphLink>();
-  const connected = new Set<string>(activePath ? [activePath] : []);
-  const nodes = new Map<string, GraphNode>();
-  if (vaultGraph) {
-    for (const node of vaultGraph.nodes) {
-      if (node.kind === "binary" && !showAttachments) continue;
-      if (node.kind === "missing" && existingFilesOnly) continue;
-      nodes.set(node.id, {
-        id: node.id,
-        title: node.label,
-        kind: node.kind === "missing" ? "missing" : node.kind === "binary" ? "attachment" : "file",
-        connected: false,
-        path: node.path,
-      });
-    }
-    for (const edge of vaultGraph.edges) {
-      if (!nodes.has(edge.source) || !nodes.has(edge.target)) continue;
-      edges.set(`${edge.source}\n${edge.target}`, { source: edge.source, target: edge.target });
-      if (edge.source === activePath || edge.target === activePath) {
-        connected.add(edge.source);
-        connected.add(edge.target);
-      }
-    }
-  } else {
-    for (const document of documents) {
-      const id = document.path ?? document.title;
-      nodes.set(id, {
-        id,
-        title: document.title,
-        kind: "file",
-        connected: false,
-        path: document.path,
-      });
-    }
-    const linkIndex = buildLinkIndex(documents);
-    for (const edge of linkIndex.edges) {
-      const id = `${edge.source}\n${edge.target}`;
-      edges.set(id, { source: edge.source, target: edge.target });
-      if (edge.source === activePath || edge.target === activePath) {
-        connected.add(edge.source);
-        connected.add(edge.target);
-      }
-    }
-  }
-  const knownTitles = new Set(documents.map((document) => document.title));
-
-  for (const document of documents) {
-    const documentId = document.path ?? document.title;
-    if (!nodes.has(documentId)) continue;
-    if (showTags) {
-      for (const tag of tagsFor(document.content)) {
-        const id = `#${tag}`;
-        if (!nodes.has(id)) nodes.set(id, { id, title: id, kind: "tag", connected: false });
-        edges.set(`${documentId}\n${id}`, { source: documentId, target: id });
-      }
-    }
-    if (!vaultGraph && !existingFilesOnly) {
-      for (const target of linkedTitles(document.content)) {
-        const missingTitle = target.slice(target.lastIndexOf("/") + 1);
-        if (!missingTitle || knownTitles.has(missingTitle) || nodes.has(missingTitle)) continue;
-        nodes.set(missingTitle, {
-          id: missingTitle,
-          title: missingTitle,
-          kind: "missing",
-          connected: false,
-        });
-        edges.set(`${documentId}\n${missingTitle}`, {
-          source: documentId,
-          target: missingTitle,
-        });
-      }
-    }
-  }
-
-  for (const node of nodes.values()) {
-    node.connected = activePath ? connected.has(node.id) || node.id === activePath : true;
-  }
-
-  return { nodes: [...nodes.values()], links: [...edges.values()] };
-}
-
-function ForceSection({
-  title,
-  children,
-  defaultOpen = false,
-}: {
-  title: string;
-  children: React.ReactNode;
-  defaultOpen?: boolean;
-}) {
-  return (
-    <details open={defaultOpen} className="border-t [border-color:var(--layout-separator)]">
-      <summary className="flex h-9 cursor-pointer list-none items-center gap-1 px-2 text-xs font-medium marker:hidden">
-        <ChevronDown className="size-3.5 [[open]_&]:rotate-180" />
-        {title}
-      </summary>
-      <div className="space-y-2 px-2 pb-3">{children}</div>
-    </details>
-  );
-}
-
 export function GraphView({
+  embedded = false,
   documents,
   vaultGraph,
   activePath,
   bookmarked,
   onBookmarkChange,
   onOpenDocument,
+  onSearchTag,
   onSplitRight,
   onSplitDown,
 }: GraphViewProps) {
   const [query, setQuery] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [contextNode, setContextNode] = useState<GraphNode | null>(null);
   const [showTags, setShowTags] = useState(false);
   const [showAttachments, setShowAttachments] = useState(false);
   const [existingFilesOnly, setExistingFilesOnly] = useState(false);
@@ -418,7 +281,7 @@ export function GraphView({
         setLayoutNodes([...nodes]);
         if (autoFitPendingRef.current) {
           autoFitPendingRef.current = false;
-          requestAnimationFrame(() => fitGraphRef.current(0.55));
+          requestAnimationFrame(() => fitGraphRef.current());
         }
       });
 
@@ -599,7 +462,7 @@ export function GraphView({
             : node.kind === "tag" || node.kind === "missing"
               ? secondaryNodeColor
               : nodeColor;
-      nodes.circle(node.x, node.y, radius).fill({ color: fill, alpha: 1 });
+      nodes.circle(node.x, node.y, radius).fill({ color: fill, alpha: hoveredId && !hoveredNeighbors.has(node.id) ? 0.18 : 1 });
       if (labelsVisible) {
         const screenX = node.x * transform.k + transform.x;
         const screenY = node.y * transform.k + transform.y;
@@ -614,7 +477,7 @@ export function GraphView({
         if (!label) {
           label = new BitmapText({
             text: node.title,
-            style: { fontFamily: "system-ui", fontSize: 8, fill: foreground },
+            style: { fontFamily: "system-ui", fontSize: 11, fill: foreground },
           });
           labelById.set(node.id, label);
           labels.addChild(label);
@@ -676,7 +539,7 @@ export function GraphView({
     const height = Math.max(120, maxY - minY + 120);
     const scale = Math.max(
       minimumScale,
-      Math.min(2.2, 0.9 / Math.max(width / viewport.width, height / viewport.height))
+      Math.min(1, 0.9 / Math.max(width / viewport.width, height / viewport.height))
     );
     const next = zoomIdentity
       .translate(viewport.width / 2, viewport.height / 2)
@@ -691,7 +554,7 @@ export function GraphView({
     const timer = window.setTimeout(() => {
       if (!autoFitPendingRef.current) return;
       autoFitPendingRef.current = false;
-      fitGraphRef.current(0.55);
+      fitGraphRef.current();
     }, 2_000);
     return () => window.clearTimeout(timer);
   }, [graph]);
@@ -744,7 +607,7 @@ export function GraphView({
       if (blob) void navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
     }, "image/png");
   };
-  const graphCoordinates = (event: React.PointerEvent<HTMLDivElement>) => {
+  const graphCoordinates = (event: React.MouseEvent<HTMLDivElement>) => {
     const surface = surfaceRef.current;
     if (!surface) return null;
     const bounds = surface.getBoundingClientRect();
@@ -753,13 +616,13 @@ export function GraphView({
       y: (event.clientY - bounds.top - transform.y) / transform.k,
     };
   };
-  const nodeAtPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+  const nodeAtPointer = (event: React.MouseEvent<HTMLDivElement>) => {
     const coordinates = graphCoordinates(event);
     if (!coordinates) return null;
     let nearest: GraphNode | null = null;
     let nearestDistance = Number.POSITIVE_INFINITY;
     for (const node of visibleNodes) {
-      if (node.x === undefined || node.y === undefined || !node.path) continue;
+      if (node.x === undefined || node.y === undefined || (!node.path && node.kind !== "tag")) continue;
       const radius = graphNodeRadius(node, linkCounts.get(node.id) ?? 0, nodeSize);
       const distance = Math.hypot(coordinates.x - node.x, coordinates.y - node.y);
       if (distance <= radius + 8 / transform.k && distance < nearestDistance) {
@@ -814,32 +677,39 @@ export function GraphView({
     }
     simulationRef.current?.alphaTarget(0).alpha(0.75).restart();
     if (shouldOpen) onOpenDocument(node.path!);
+    if (openOnClick && !session.moved && node.kind === "tag") onSearchTag?.(node.title.replace(/^#/, ""));
   };
 
-  return (
-    <FluxEditorPane
-      title="Graph view"
-      menuLabel="More options"
-      menuContent={
-        <GraphViewMenu
-          bookmarked={bookmarked}
-          onBookmarkChange={onBookmarkChange}
-          onCopyScreenshot={copyScreenshot}
-          onSplitRight={onSplitRight}
-          onSplitDown={onSplitDown}
-        />
-      }
-    >
+  const content = (
       <section
-        className="relative flex h-full min-h-0 flex-col bg-sidebar"
+        className="relative flex h-full w-full min-h-0 min-w-0 flex-col bg-[var(--workbench-editor,var(--background))]"
         aria-label="Graph view"
       >
-        <div
+        <ContextMenu>
+        <ContextMenuTrigger render={<div
           ref={surfaceRef}
-          className="absolute inset-0 touch-none overflow-hidden bg-sidebar"
+          className="absolute inset-0 touch-none overflow-hidden bg-inherit outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
           role="img"
           aria-label="Knowledge graph"
+          aria-description="Drag to pan. Use arrow keys to move, plus and minus to zoom, and Home to fit. Click a note to open it."
+          tabIndex={0}
+          onContextMenu={(event) => setContextNode(nodeAtPointer(event))}
+          onKeyDown={(event) => {
+            if (event.key === "+" || event.key === "=") changeZoom(1.25);
+            else if (event.key === "-") changeZoom(0.8);
+            else if (event.key === "Home") fitGraph();
+            else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+              const surface = surfaceRef.current;
+              const behavior = zoomRef.current;
+              const step = (event.shiftKey ? 100 : 30) / transform.k;
+              if (surface && behavior) select(surface).call(behavior.translateBy,
+                event.key === "ArrowLeft" ? step : event.key === "ArrowRight" ? -step : 0,
+                event.key === "ArrowUp" ? step : event.key === "ArrowDown" ? -step : 0);
+            } else return;
+            event.preventDefault();
+          }}
           onPointerDown={(event) => {
+            if (event.button !== 0) return;
             const node = nodeAtPointer(event);
             const coordinates = graphCoordinates(event);
             if (!node || !coordinates) return;
@@ -871,11 +741,17 @@ export function GraphView({
           onPointerLeave={() => {
             if (!dragRef.current) setHoveredId(null);
           }}
-        />
+        />} />
+        <ContextMenuContent>
+          {contextNode?.path ? <ContextMenuItem onClick={() => onOpenDocument(contextNode.path!)}>Open note</ContextMenuItem> : null}
+          {contextNode?.kind === "tag" ? <ContextMenuItem onClick={() => onSearchTag?.(contextNode.title.replace(/^#/, ""))}>Find notes with this tag</ContextMenuItem> : null}
+          <ContextMenuItem onClick={() => fitGraph()}>Fit graph to view</ContextMenuItem>
+        </ContextMenuContent>
+        </ContextMenu>
         <div
-          className={`absolute top-2 z-20 flex flex-col gap-0.5 text-muted-foreground ${showSettings ? "right-[15.5rem]" : "right-2"}`}
+          className="absolute right-2 top-2 z-20 flex flex-col gap-0.5 text-muted-foreground"
         >
-          <button
+          <Button variant="ghost"
             type="button"
             aria-label="Open graph settings"
             title="Open graph settings"
@@ -883,107 +759,29 @@ export function GraphView({
             onClick={() => setShowSettings((open) => !open)}
           >
             <Settings className="size-3.5" />
-          </button>
-          <button
+          </Button>
+          <Button variant="ghost"
             type="button"
-            aria-label="Start time-lapse animation"
-            title="Start time-lapse animation"
+            aria-label="Animate graph layout"
+            title="Animate graph layout"
             className="grid size-7 place-items-center rounded-md hover:bg-accent hover:text-foreground"
             onClick={() => simulationRef.current?.alpha(1).restart()}
           >
             <WandSparkles className="size-3.5" />
-          </button>
-          <button
-            type="button"
-            aria-label="Zoom graph in"
-            title="Zoom in"
-            className="grid size-7 place-items-center rounded-md hover:bg-accent hover:text-foreground"
-            onClick={() => changeZoom(1.25)}
-          >
-            <ZoomIn className="size-3.5" />
-          </button>
-          <button
-            type="button"
-            aria-label="Zoom graph out"
-            title="Zoom out"
-            className="grid size-7 place-items-center rounded-md hover:bg-accent hover:text-foreground"
-            onClick={() => changeZoom(0.8)}
-          >
-            <ZoomOut className="size-3.5" />
-          </button>
-          <button
-            type="button"
-            aria-label="Fit graph to view"
-            title="Fit to view"
-            className="grid size-7 place-items-center rounded-md hover:bg-accent hover:text-foreground"
-            onClick={() => fitGraph()}
-          >
-            <Maximize2 className="size-3.5" />
-          </button>
+          </Button>
         </div>
         {showSettings ? (
-          <aside className="absolute bottom-2 right-2 top-2 z-30 w-60 overflow-y-auto rounded-lg border bg-popover text-popover-foreground shadow-lg [border-color:var(--layout-separator)]">
-            <div className="flex h-9 items-center gap-1 border-b px-2 text-xs font-medium [border-color:var(--layout-separator)]">
-              <span className="flex-1">Graph settings</span>
-              <button type="button" aria-label="Restore default graph settings" onClick={reset}>
-                <RotateCcw className="size-3.5" />
-              </button>
-              <button
-                type="button"
-                aria-label="Close graph settings"
-                onClick={() => setShowSettings(false)}
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
-            <label className="mx-2 my-2 flex h-7 items-center gap-1 rounded-md border px-2 text-muted-foreground [border-color:var(--layout-separator)]">
-              <Search className="size-3.5" />
-              <input
-                aria-label="Search graph"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search files"
-                className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-              />
-              {query ? (
-                <button type="button" aria-label="Clear graph search" onClick={() => setQuery("")}>
-                  <X className="size-3.5" />
-                </button>
-              ) : null}
-            </label>
-            <ForceSection title="Filters" defaultOpen>
-              <label className="flex items-center justify-between gap-2 text-xs">
-                Tags{" "}
-                <input
-                  type="checkbox"
-                  checked={showTags}
-                  onChange={(event) => setShowTags(event.target.checked)}
-                />
-              </label>
-              <label className="flex items-center justify-between gap-2 text-xs">
-                Attachments{" "}
-                <input
-                  type="checkbox"
-                  checked={showAttachments}
-                  onChange={(event) => setShowAttachments(event.target.checked)}
-                />
-              </label>
-              <label className="flex items-center justify-between gap-2 text-xs">
-                Existing files only{" "}
-                <input
-                  type="checkbox"
-                  checked={existingFilesOnly}
-                  onChange={(event) => setExistingFilesOnly(event.target.checked)}
-                />
-              </label>
-              <label className="flex items-center justify-between gap-2 text-xs">
-                Orphans{" "}
-                <input
-                  type="checkbox"
-                  checked={showOrphans}
-                  onChange={(event) => setShowOrphans(event.target.checked)}
-                />
-              </label>
+          <aside className="absolute right-2 top-2 z-30 max-h-[calc(100%-1rem)] w-60 max-w-[calc(100%-1rem)] overflow-y-auto rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-border">
+            <ForceSection title="Filters" defaultOpen actions={<>
+              <Button variant="ghost" size="icon-sm" aria-label="Restore default graph settings" onClick={reset}><RotateCcw className="size-3.5" /></Button>
+              <Button variant="ghost" size="icon-sm" aria-label="Close graph settings" onClick={() => setShowSettings(false)}><X className="size-3.5" /></Button>
+            </>}>
+              <Input aria-label="Search graph" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search files" className="h-8 text-xs" />
+
+              <GraphSwitch label="Tags" checked={showTags} onCheckedChange={setShowTags} />
+              <GraphSwitch label="Attachments" checked={showAttachments} onCheckedChange={setShowAttachments} />
+              <GraphSwitch label="Existing files only" checked={existingFilesOnly} onCheckedChange={setExistingFilesOnly} />
+              <GraphSwitch label="Orphans" checked={showOrphans} onCheckedChange={setShowOrphans} />
             </ForceSection>
             <ForceSection title="Groups">
               {groups.map((group) => (
@@ -1018,7 +816,7 @@ export function GraphView({
                     placeholder="Search query"
                     className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 text-xs outline-none [border-color:var(--layout-separator)]"
                   />
-                  <button
+                  <Button variant="ghost"
                     type="button"
                     aria-label="Remove group"
                     onClick={() =>
@@ -1028,10 +826,10 @@ export function GraphView({
                     }
                   >
                     <X className="size-3.5" />
-                  </button>
+                  </Button>
                 </div>
               ))}
-              <button
+              <Button variant="ghost"
                 type="button"
                 className="flex h-7 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
                 onClick={() =>
@@ -1042,128 +840,36 @@ export function GraphView({
                 }
               >
                 <Plus className="size-3.5" /> New group
-              </button>
+              </Button>
             </ForceSection>
             <ForceSection title="Display">
-              <label className="flex items-center justify-between gap-2 text-xs">
-                Show labels{" "}
-                <input
-                  type="checkbox"
-                  checked={showLabels}
-                  onChange={(event) => setShowLabels(event.target.checked)}
-                />
-              </label>
-              <label className="flex items-center justify-between gap-2 text-xs">
-                Arrows{" "}
-                <input
-                  type="checkbox"
-                  checked={showArrows}
-                  onChange={(event) => setShowArrows(event.target.checked)}
-                />
-              </label>
-              <label className="block text-xs">
-                Text fade threshold
-                <input
-                  aria-label="Text fade threshold"
-                  className="mt-1 w-full"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={textFadeThreshold}
-                  onChange={(event) => setTextFadeThreshold(Number(event.target.value))}
-                />
-              </label>
-              <label className="block text-xs">
-                Node size
-                <input
-                  aria-label="Node size"
-                  className="mt-1 w-full"
-                  type="range"
-                  min="0.5"
-                  max="2.5"
-                  step="0.05"
-                  value={nodeSize}
-                  onChange={(event) => setNodeSize(Number(event.target.value))}
-                />
-              </label>
-              <label className="block text-xs">
-                Link thickness
-                <input
-                  aria-label="Link thickness"
-                  className="mt-1 w-full"
-                  type="range"
-                  min="0.4"
-                  max="3"
-                  step="0.05"
-                  value={linkThickness}
-                  onChange={(event) => setLinkThickness(Number(event.target.value))}
-                />
-              </label>
-              <button
+              <GraphSwitch label="Show labels" checked={showLabels} onCheckedChange={setShowLabels} />
+              <GraphSwitch label="Arrows" checked={showArrows} onCheckedChange={setShowArrows} />
+              <GraphSlider label="Text fade threshold" value={textFadeThreshold} min={0} max={1} step={0.01} onChange={setTextFadeThreshold} />
+              <GraphSlider label="Node size" value={nodeSize} min={0.5} max={2.5} step={0.05} onChange={setNodeSize} />
+              <GraphSlider label="Link thickness" value={linkThickness} min={0.4} max={3} step={0.05} onChange={setLinkThickness} />
+              <Button variant="ghost"
                 type="button"
                 className="flex h-7 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
                 onClick={() => simulationRef.current?.alpha(1).restart()}
               >
                 <WandSparkles className="size-3.5" /> Animate
-              </button>
+              </Button>
             </ForceSection>
             <ForceSection title="Forces">
-              <label className="block text-xs">
-                Centre force
-                <input
-                  aria-label="Centre force"
-                  className="mt-1 w-full"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.0000001"
-                  value={centerForce}
-                  onChange={(event) => setCenterForce(Number(event.target.value))}
-                />
-              </label>
-              <label className="block text-xs">
-                Repel force
-                <input
-                  aria-label="Repel force"
-                  className="mt-1 w-full"
-                  type="range"
-                  min="0"
-                  max="20"
-                  step="0.1"
-                  value={repelForce}
-                  onChange={(event) => setRepelForce(Number(event.target.value))}
-                />
-              </label>
-              <label className="block text-xs">
-                Link force
-                <input
-                  aria-label="Link force"
-                  className="mt-1 w-full"
-                  type="range"
-                  min="0"
-                  max="2"
-                  step="0.05"
-                  value={linkForce}
-                  onChange={(event) => setLinkForce(Number(event.target.value))}
-                />
-              </label>
-              <label className="block text-xs">
-                Link distance
-                <input
-                  aria-label="Link distance"
-                  className="mt-1 w-full"
-                  type="range"
-                  min="30"
-                  max="500"
-                  value={linkDistance}
-                  onChange={(event) => setLinkDistance(Number(event.target.value))}
-                />
-              </label>
+              <GraphSlider label="Centre force" value={centerForce} min={0} max={1} step={0.0000001} onChange={setCenterForce} />
+              <GraphSlider label="Repel force" value={repelForce} min={0} max={20} step={0.1} onChange={setRepelForce} />
+              <GraphSlider label="Link force" value={linkForce} min={0} max={2} step={0.05} onChange={setLinkForce} />
+              <GraphSlider label="Link distance" value={linkDistance} min={30} max={500} step={1} onChange={setLinkDistance} />
             </ForceSection>
           </aside>
         ) : null}
       </section>
-    </FluxEditorPane>
+  );
+  return embedded ? content : (
+    <FluxEditorPane title="Graph view" menuLabel="More options" menuContent={
+      <GraphViewMenu bookmarked={bookmarked} onBookmarkChange={onBookmarkChange}
+        onCopyScreenshot={copyScreenshot} onSplitRight={onSplitRight} onSplitDown={onSplitDown} />
+    }>{content}</FluxEditorPane>
   );
 }

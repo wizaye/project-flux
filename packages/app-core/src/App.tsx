@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { VSCodeWorkbench } from "@flux/shared-ui/components/design-system/workbench";
 import { ThemeProvider } from "@flux/shared-ui/components/theme-provider";
 import type {
   WorkbenchSnapshot,
   WorkbenchTheme,
   WorkbenchUpdate,
+  WorkbenchNativeCommand,
 } from "@flux/shared-ui/components/design-system/workbench";
 import type { FluxClient } from "@flux/bridge-contract";
 import { browserStatePersistence, type FluxStatePersistence } from "./app/state";
@@ -13,14 +14,19 @@ import { MarkdownEditor, type DemoDocument } from "./editor/markdown-editor";
 import { PdfExportDialog } from "./pdf/export";
 import { VaultManager } from "./workspace/dialogs";
 import { useWorkbenchVault } from "./workbench/use-workbench-vault";
+import { workspaceCreationPath } from "./workbench/workspace-setup";
 import { dateFromKey, localDateKey } from "./daily-notes/config";
 import { useDailyNotes } from "./daily-notes/use-daily-notes";
+import { SearchPane, WorkspaceRightSidebar } from "./workspace/sidebars";
+import { WorkbenchGraph } from "./workbench/workbench-graph";
+import type { EditorTab } from "@flux/shared-ui/components/design-system/workbench/editor/editor-area";
+import { OnboardingPage } from "@flux/shared-ui/components/design-system/workbench/chrome/onboarding-page";
 
 export interface FluxRuntime {
   label: string;
   connect: () => Promise<string>;
   client: FluxClient | null;
-  selectVaultDirectory?: (mode: "open" | "create") => Promise<string | null>;
+  selectVaultDirectory?: (mode: "open" | "create" | "location") => Promise<string | null>;
   getPerformanceStats?: () => Promise<FluxPerformanceStats | null>;
   checkForUpdates?: () => Promise<WorkbenchUpdate>;
   downloadUpdate?: () => Promise<void>;
@@ -28,9 +34,10 @@ export interface FluxRuntime {
   onUpdateStatus?: (handler: (status: UpdateRuntimeStatus) => void) => () => void;
   openWindow?: (url: string) => Promise<void>;
   hideWindow?: () => Promise<void>;
+  showQuickCapture?: () => Promise<void>;
   getMCPServerCommand?: () => Promise<{ command: string; args: string[] }>;
   onCommand?: (
-    handler: (command: "search" | "daily-today" | "calendar" | "settings") => void
+    handler: (command: WorkbenchNativeCommand) => void
   ) => () => void;
   onBeforeShutdown?: (handler: () => Promise<void>) => () => void;
   exportPdf?: (options: PdfExportOptions) => Promise<string | null>;
@@ -89,12 +96,20 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
   const [update, setUpdate] = useState<WorkbenchUpdate>();
   const [updateStatus, setUpdateStatus] = useState<UpdateRuntimeStatus>();
   const [hydrated, setHydrated] = useState(false);
+  const [onboardingComplete, setOnboardingComplete] = useState(false);
+  const [setupVaultPickerOpen, setSetupVaultPickerOpen] = useState(false);
+  const [restorePreviousVault, setRestorePreviousVault] = useState(false);
   const snapshotRef = useRef<WorkbenchSnapshot | undefined>(undefined);
   const [vaultQuery, setVaultQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [backlinks, setBacklinks] = useState<number>();
+  const [activeDocument, setActiveDocument] = useState<DemoDocument | null>(null);
   const [findRequest, setFindRequest] = useState(0);
   const [pdfDocument, setPdfDocument] = useState<DemoDocument | null>(null);
   const [pdfOpen, setPdfOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [performanceStats, setPerformanceStats] = useState<FluxPerformanceStats | null>(null);
+  const updateCheckStartedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +120,8 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
       .then(([id, settings]) => {
         if (cancelled) return;
         const savedTheme = settings[THEME_KEY];
+        setOnboardingComplete(settings["onboarding.completed"] === true);
+        setRestorePreviousVault(settings["onboarding.completed"] === true);
         setWindowId(id);
         setSnapshot(settings[snapshotKey(id)] as WorkbenchSnapshot | undefined);
         if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme);
@@ -120,8 +137,8 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
     };
   }, [persistence, runtime]);
 
-  const vault = useWorkbenchVault({ runtime, persistence, windowId });
-  const chat = useAgentChat(runtime.client, vault.vault?.id);
+  const vault = useWorkbenchVault({ runtime, persistence, windowId, restore: restorePreviousVault });
+  const chat = useAgentChat(runtime.client, vault.vault?.id, persistence);
   const reportJournalError = useCallback((message: string) => console.error(message), []);
   const journal = useDailyNotes({
     client: runtime.client,
@@ -132,6 +149,39 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
     onStatus: reportJournalError,
   });
   const changeVaultDocument = vault.changeDocument;
+  const flushVaultSaves = vault.flushSaves;
+  const handleActiveEditorChange = useCallback((tab?: EditorTab) => {
+    const path = tab?.id.startsWith("file:") ? tab.id.slice(5) : undefined;
+    setActiveDocument(path && tab ? { path, title: tab.title, content: tab.content ?? "" } : null);
+  }, []);
+  const vaultId = vault.vault?.id;
+  const loadReferences = useCallback(async (path: string, includeUnlinked?: boolean) => {
+    if (!runtime.client || !vaultId) throw new Error("No vault open");
+    return runtime.client.getDocumentReferences(vaultId, path, includeUnlinked);
+  }, [runtime.client, vaultId, vault.files]);
+  const loadFacets = useCallback(async () => {
+    if (!runtime.client || !vaultId) throw new Error("No vault open");
+    return runtime.client.getVaultFacets(vaultId);
+  }, [runtime.client, vaultId, vault.files]);
+
+  // Refresh the active count when the vault index changes, not just on tab clicks.
+  useEffect(() => {
+    const path = activeDocument?.path;
+    setBacklinks(undefined);
+    if (!path) return;
+    let current = true;
+    void loadReferences(path).then((references) => {
+      if (current) setBacklinks(references.linked.length);
+    }).catch(() => { if (current) setBacklinks(undefined); });
+    return () => { current = false; };
+  }, [activeDocument?.path, loadReferences]);
+  const searchVault = useCallback(
+    (query: string, offset = 0, matchCase = false) =>
+      runtime.client && vault.vault
+        ? runtime.client.searchVault(vault.vault.id, query, 100, offset, matchCase)
+        : Promise.resolve([]),
+    [runtime.client, vault.vault]
+  );
 
 
 
@@ -143,6 +193,27 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
       }),
     [runtime]
   );
+
+  useEffect(() => {
+    if (!runtime.getPerformanceStats) return;
+
+    let active = true;
+    const refresh = async () => {
+      try {
+        const stats = await runtime.getPerformanceStats?.();
+        if (active) setPerformanceStats(stats ?? null);
+      } catch {
+        if (active) setPerformanceStats(null);
+      }
+    };
+
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 10_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [runtime]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -162,11 +233,12 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
   useEffect(
     () =>
       runtime.onBeforeShutdown?.(async () => {
+        await flushVaultSaves();
         if (windowId && snapshotRef.current) {
           await persistence.saveAppSetting(snapshotKey(windowId), snapshotRef.current);
         }
       }),
-    [persistence, runtime, windowId]
+    [persistence, runtime, windowId, flushVaultSaves]
   );
 
   const handleStateChange = useCallback((next: WorkbenchSnapshot) => setSnapshot(next), []);
@@ -176,39 +248,74 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
     const result = await runtime.checkForUpdates();
     if (result) setUpdate(result);
   }, [runtime]);
+
+  useEffect(() => {
+    if (!hydrated || !onboardingComplete || !runtime.checkForUpdates || updateCheckStartedRef.current) return;
+    updateCheckStartedRef.current = true;
+    void handleCheckForUpdates().catch(() => undefined);
+  }, [handleCheckForUpdates, hydrated, onboardingComplete, runtime.checkForUpdates]);
+
+  const documentLocations = useMemo(() => vault.files.filter((file) => file.kind !== "directory")
+    .map((file) => ({ path: file.path, title: file.name, content: "" })), [vault.files]);
   const renderEditor = useCallback(
     (
-      tab: { id: string; title: string; content?: string },
-      update: (changes: { title?: string; content?: string; dirty?: boolean }) => void
+      tab: EditorTab,
+      update: (changes: { title?: string; content?: string; dirty?: boolean }) => void,
+      onOpenDocument?: (path: string) => void
     ) => {
       if (!tab.title.toLowerCase().endsWith(".md")) return null;
       const path = tab.id.startsWith("file:") ? tab.id.slice(5) : undefined;
       return (
         <MarkdownEditor
           document={{ title: tab.title.replace(/\.md$/i, ""), path, content: tab.content ?? "" }}
-          mode="live"
+          mode={tab.mode ?? "live"}
           onChange={(content) => {
             update({ content, dirty: true });
             if (path) changeVaultDocument(path, content, () => update({ dirty: false }));
           }}
           onTitleChange={() => undefined}
           showBacklinks={false}
+          documents={documentLocations}
+          onOpenDocument={onOpenDocument}
           findRequest={findRequest}
         />
       );
     },
-    [changeVaultDocument, findRequest]
+    [changeVaultDocument, findRequest, documentLocations]
   );
 
   if (!hydrated) return <div className="h-dvh bg-background" />;
+
+  async function finishSetup() {
+    await persistence.saveAppSetting("onboarding.completed", true);
+    setSetupVaultPickerOpen(false);
+    setOnboardingComplete(true);
+  }
+
+  async function chooseVault(mode: "open" | "create") {
+    const opened = await vault.chooseVault(mode);
+    if (opened && !onboardingComplete) await finishSetup();
+  }
 
   return (
     <ThemeProvider
       theme={theme}
       onThemeChange={(nextTheme) => nextTheme !== "system" && setTheme(nextTheme)}
     >
-      <VSCodeWorkbench
-        key={windowId}
+      {!onboardingComplete ? <OnboardingPage
+        theme={theme}
+        onThemeChange={setTheme}
+        ready={Boolean(runtime.client)}
+        managed={runtime.vaultAccess === "registry"}
+        onSelectLocation={runtime.vaultAccess !== "registry" && runtime.selectVaultDirectory ? () => runtime.selectVaultDirectory!("location") : undefined}
+        onOpenVault={runtime.vaultAccess !== "registry" && runtime.selectVaultDirectory ? () => chooseVault("open") : async () => { setSetupVaultPickerOpen(true); }}
+        onCreateWorkspace={async ({ name, location }) => {
+          const path = workspaceCreationPath(name, location, runtime.vaultAccess === "registry");
+          await vault.connectVault(path, "create");
+          await finishSetup();
+        }}
+      /> : <VSCodeWorkbench
+        key={`${windowId}:${vault.vault?.id ?? "no-vault"}`}
         runtimeLabel={runtime.label}
         theme={theme}
         titleBarInset={windowControlsInset}
@@ -234,11 +341,35 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
                           : undefined
         }
         updateProgress={updateStatus?.state === "downloading" ? updateStatus.percent : undefined}
+        settingsOpen={settingsOpen}
+        onSettingsOpenChange={setSettingsOpen}
         onCheckForUpdates={runtime.checkForUpdates ? handleCheckForUpdates : undefined}
         onDownloadUpdate={runtime.downloadUpdate}
         onInstallUpdate={runtime.installUpdate}
         onThemeChange={setTheme}
         onStateChange={handleStateChange}
+        onQuickCapture={runtime.showQuickCapture}
+        onCommand={runtime.onCommand}
+        onOpenToday={() => journal.openDaily(localDateKey())}
+        renderSearch={(onOpenDocument) => (
+          <SearchPane searchVault={searchVault} onOpenDocument={onOpenDocument} query={searchQuery} onQueryChange={setSearchQuery} />
+        )}
+        renderGraph={runtime.client && vault.vault ? (onOpenDocument, onSplit, showSearch) => (
+          <WorkbenchGraph client={runtime.client!} vaultId={vault.vault!.id} onOpenDocument={onOpenDocument} onSplit={onSplit}
+            onSearchTag={(tag) => { setSearchQuery(`tag:${JSON.stringify(tag)}`); showSearch(); }} />
+        ) : undefined}
+        renderBacklinks={(onOpenDocument) => (
+          <WorkspaceRightSidebar pane="backlinks" activeDocument={activeDocument} documents={[]}
+            onOpenDocument={onOpenDocument} onOpenReference={(path) => onOpenDocument(path)}
+            loadReferences={loadReferences} />
+        )}
+        renderTags={(showSearch) => (
+          <WorkspaceRightSidebar pane="tags" activeDocument={activeDocument} documents={[]}
+            onOpenDocument={() => undefined} loadFacets={loadFacets}
+            onSearchTag={(tag) => { setSearchQuery(`tag:${JSON.stringify(tag)}`); showSearch(); }} />
+        )}
+        cpuPercent={performanceStats?.cpuPercent}
+        memoryMB={performanceStats?.memoryMB}
         files={vault.files}
         workspaceName={vault.vault?.name ?? "No vault open"}
         workspaceOpen={Boolean(vault.vault)}
@@ -252,17 +383,7 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
         onEditorChange={(tab, content, onSaved) => {
           if (tab.id.startsWith("file:")) vault.changeDocument(tab.id.slice(5), content, onSaved);
         }}
-        onActiveEditorChange={(tab) => {
-          const path = tab?.id.startsWith("file:") ? tab.id.slice(5) : undefined;
-          if (!path) {
-            setBacklinks(undefined);
-            return;
-          }
-          void vault
-            .backlinkCount(path)
-            .then(setBacklinks)
-            .catch(() => setBacklinks(0));
-        }}
+        onActiveEditorChange={handleActiveEditorChange}
         backlinks={backlinks}
         onFindInEditor={() => setFindRequest((value) => value + 1)}
         onExportPdf={(tab) => {
@@ -296,12 +417,17 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
           if (runtime.openWindow) void runtime.openWindow(url.toString());
           else window.open(url.toString(), "_blank", "popup,width=960,height=720");
         }}
-      />
+      />}
       <VaultManager
-        open={vault.managerOpen}
-        canClose={Boolean(vault.vault)}
+        open={onboardingComplete ? vault.managerOpen : setupVaultPickerOpen}
+        canClose={!onboardingComplete || Boolean(vault.vault)}
         activeVaultId={vault.vault?.id ?? ""}
-        vaults={vault.available
+        vaults={[...vault.available, ...vault.recent.map((item) => ({
+          vaultId: item.vaultId,
+          name: item.displayName,
+          path: item.path,
+        }))]
+          .filter((item, index, items) => items.findIndex((candidate) => candidate.path === item.path) === index)
           .filter((item) =>
             `${item.name} ${item.path}`.toLowerCase().includes(vaultQuery.toLowerCase())
           )
@@ -309,12 +435,15 @@ export function FluxApp({ runtime, windowControlsInset = 0 }: FluxAppProps) {
         recentVaults={vault.recent}
         query={vaultQuery}
         vaultAccess={runtime.vaultAccess}
-        canSelectDirectory={Boolean(runtime.selectVaultDirectory)}
-        onClose={() => vault.setManagerOpen(false)}
+        canSelectDirectory={onboardingComplete && Boolean(runtime.selectVaultDirectory)}
+        onClose={() => { vault.setManagerOpen(false); setSetupVaultPickerOpen(false); }}
         onQueryChange={setVaultQuery}
-        onOpenVault={(item) => void vault.openVault(item)}
-        onForgetVault={(vaultId) => void vault.forgetVault(vaultId)}
-        onChooseVault={(mode) => void vault.chooseVault(mode)}
+        onOpenVault={async (item) => {
+          await vault.openVault(item);
+          if (!onboardingComplete) await finishSetup();
+        }}
+        onForgetVault={vault.forgetVault}
+        onChooseVault={chooseVault}
       />
       <PdfExportDialog
         document={pdfDocument}

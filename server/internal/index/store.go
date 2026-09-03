@@ -807,10 +807,18 @@ func (s *Store) Graph() (domain.VaultGraph, error) {
 			}
 		}
 	}
+	var tagRecords []TagRecord
+	if err := s.db.Order("source_path, tag").Find(&tagRecords).Error; err != nil {
+		return domain.VaultGraph{}, err
+	}
+	tagsByPath := make(map[string][]string)
+	for _, tag := range tagRecords {
+		tagsByPath[tag.SourcePath] = append(tagsByPath[tag.SourcePath], tag.Tag)
+	}
 	nodes := make([]domain.GraphNode, 0, len(records))
 	for _, record := range records {
 		label := record.DisplayName
-		nodes = append(nodes, domain.GraphNode{ID: record.RelativePath, Path: record.RelativePath, Label: label, Kind: record.Kind})
+		nodes = append(nodes, domain.GraphNode{ID: record.RelativePath, Path: record.RelativePath, Label: label, Kind: record.Kind, Tags: tagsByPath[record.RelativePath]})
 	}
 	var linkRecords []LinkRecord
 	if err := s.db.Order("source_path, position").Find(&linkRecords).Error; err != nil {

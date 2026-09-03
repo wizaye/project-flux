@@ -76,10 +76,11 @@ type FileDocument struct {
 }
 
 type GraphNode struct {
-	ID    string `json:"id"`
-	Path  string `json:"path,omitempty"`
-	Label string `json:"label"`
-	Kind  string `json:"kind"`
+	ID    string   `json:"id"`
+	Path  string   `json:"path,omitempty"`
+	Label string   `json:"label"`
+	Kind  string   `json:"kind"`
+	Tags  []string `json:"tags,omitempty"`
 }
 
 type GraphEdge struct {

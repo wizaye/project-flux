@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import "@vscode/codicons/dist/codicon.css";
 
 import { Button } from "../ui/button";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../ui/resizable";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup, usePanelRef } from "../ui/resizable";
 import { ActivityBar, type ActivityBarItem } from "./workbench/chrome/activity-bar";
 import { CommandPalette } from "./workbench/chrome/command-palette";
 import { NotificationCenter } from "./workbench/chrome/notification-center";
@@ -12,7 +12,9 @@ import {
 } from "./workbench/chrome/release-notes-dialog";
 import { WorkbenchFooter } from "./workbench/chrome/workbench-footer";
 import { WorkbenchHeader } from "./workbench/chrome/workbench-header";
+import { WorkbenchSettingsDialog } from "./workbench/chrome/workbench-settings-dialog";
 import { EditorArea, type EditorAreaHandle } from "./workbench/editor/editor-area";
+import { documentStatistics } from "./workbench/editor/editor-model";
 import { JournalCalendar } from "./workbench/journal/journal-calendar";
 import { GroupButton } from "./group-button";
 import { PrimarySidebar } from "./workbench/sidebar/primary-sidebar";
@@ -24,6 +26,7 @@ import type {
   WorkbenchNotification,
   WorkbenchSnapshot,
   WorkbenchTheme,
+  WorkbenchNativeCommand,
 } from "./workbench/types";
 import { getWorkbenchTheme } from "./workbench/workbench-theme";
 
@@ -32,6 +35,7 @@ export type {
   WorkbenchSnapshot,
   WorkbenchTheme,
   WorkbenchUpdate,
+  WorkbenchNativeCommand,
 } from "./workbench/types";
 
 const activityItems: readonly ActivityBarItem[] = [
@@ -42,6 +46,9 @@ const activityItems: readonly ActivityBarItem[] = [
   { id: "extensions", label: "Extensions", icon: "extensions" },
   { id: "chat", label: "Chat", icon: "comment-discussion" },
   { id: "journal", label: "Journal", icon: "calendar" },
+  { id: "graph", label: "Graph", icon: "type-hierarchy" },
+  { id: "backlinks", label: "Backlinks", icon: "references" },
+  { id: "tags", label: "Tags", icon: "tag" },
 ];
 
 const activityCopy: Record<string, { title: string; description: string }> = {
@@ -142,14 +149,22 @@ export function VSCodeWorkbench({
   update,
   updateStatus,
   updateProgress,
+  settingsOpen = false,
+  onSettingsOpenChange,
   onCheckForUpdates,
   onDownloadUpdate,
   onInstallUpdate,
   onThemeChange,
   onStateChange,
+  onQuickCapture,
+  onCommand,
+  onOpenToday,
+  renderSearch,
   words,
   characters,
   backlinks,
+  cpuPercent,
+  memoryMB,
   files,
   workspaceName,
   workspaceOpen,
@@ -167,6 +182,9 @@ export function VSCodeWorkbench({
   chat,
   journal,
   renderEditor,
+  renderGraph,
+  renderBacklinks,
+  renderTags,
   onMoveEditorToNewWindow,
 }: VSCodeWorkbenchProps) {
   const [workbenchState, setWorkbenchState] = useState(() => initialWorkbenchState(initialState));
@@ -183,6 +201,30 @@ export function VSCodeWorkbench({
   const editorRef = useRef<EditorAreaHandle>(null);
   const panelLayoutKey = layoutStorageKey(leftOpen, rightOpen);
   const defaultLayout = panelLayouts[panelLayoutKey];
+  const primaryPanel = usePanelRef();
+  const editorPanel = usePanelRef();
+  const secondaryPanel = usePanelRef();
+  const secondaryWidthBeforeMaximize = useRef<number | null>(null);
+
+  // Collapse panels without unmounting their editor/session state.
+  useEffect(() => {
+    // Let the panel group register the updated size constraints first.
+    const frame = requestAnimationFrame(() => {
+    const maximized = rightOpen && rightMaximized;
+    if (!leftOpen || maximized) primaryPanel.current?.collapse();
+    if (!rightOpen) secondaryPanel.current?.collapse();
+    if (maximized) editorPanel.current?.collapse();
+    else editorPanel.current?.expand();
+    if (leftOpen && !maximized) primaryPanel.current?.expand();
+    if (rightOpen) secondaryPanel.current?.expand();
+    if (maximized) secondaryPanel.current?.resize("100%");
+    else if (rightOpen && secondaryWidthBeforeMaximize.current !== null) {
+      secondaryPanel.current?.resize(`${secondaryWidthBeforeMaximize.current}px`);
+      secondaryWidthBeforeMaximize.current = null;
+    }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [leftOpen, rightOpen, rightMaximized, primaryPanel, editorPanel, secondaryPanel]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -231,14 +273,6 @@ export function VSCodeWorkbench({
     [workbenchState.dismissedNotifications]
   );
 
-  // Auto-open release notes when a new update becomes available
-  useEffect(() => {
-    if (updateAvailable) {
-      setNoUpdatesAvailable(false);
-      setReleaseNotesOpen(true);
-    }
-  }, [updateAvailable]);
-
   // Dismiss "no updates" message after 4 seconds
   useEffect(() => {
     if (!noUpdatesAvailable) return;
@@ -248,7 +282,7 @@ export function VSCodeWorkbench({
 
   const notifications = useMemo<WorkbenchNotification[]>(() => {
     const items: WorkbenchNotification[] = [];
-    if (noUpdatesAvailable) {
+    if (noUpdatesAvailable && !updateAvailable) {
       items.push({
         id: "update:no-updates",
         title: "No updates available",
@@ -298,6 +332,10 @@ export function VSCodeWorkbench({
   }
 
   function selectActivity(id: string) {
+    if (id === "graph" && renderGraph) {
+      editorRef.current?.openTab({ id: "workbench:graph", title: "Graph" });
+      return;
+    }
     if (id === "journal" && journal) {
       editorRef.current?.openTab({ id: "workbench:journal", title: "Journal" });
       return;
@@ -319,6 +357,23 @@ export function VSCodeWorkbench({
       activeActivity: leftOpen ? activeActivity : "explorer",
     });
   }
+
+  const handleNativeCommand = useEffectEvent((command: WorkbenchNativeCommand) => {
+    if (command === "settings") onSettingsOpenChange?.(true);
+    if (command === "updates") {
+      onSettingsOpenChange?.(true);
+      void checkForUpdates();
+    }
+    if (command === "vaults") onManageVaults?.();
+    if (command === "search") updateWorkbench({ activeActivity: "search", leftOpen: true });
+    if (command === "calendar") selectActivity("journal");
+    if (command === "daily-today") {
+      if (!workspaceOpen) onManageVaults?.();
+      else void onOpenToday?.().then((tab) => { if (tab) editorRef.current?.openTab(tab); });
+    }
+  });
+
+  useEffect(() => onCommand?.(handleNativeCommand), [onCommand]);
 
   function toggleRightPane() {
     updateWorkbench({ rightOpen: !rightOpen, rightMaximized: false });
@@ -404,6 +459,21 @@ export function VSCodeWorkbench({
         }
         onManageVaults={onManageVaults}
       />
+    ) : activeActivity === "backlinks" && renderBacklinks ? (
+      <WorkbenchPanel aria-label="Backlinks" className="overflow-auto">
+        {/* eslint-disable-next-line react-hooks/refs */}
+        {renderBacklinks((path) => void openFile(path))}
+      </WorkbenchPanel>
+    ) : activeActivity === "tags" && renderTags ? (
+      <WorkbenchPanel aria-label="Tags" className="overflow-auto">
+        {renderTags(() => updateWorkbench({ activeActivity: "search", leftOpen: true }))}
+      </WorkbenchPanel>
+    ) : activeActivity === "search" && renderSearch ? (
+      <WorkbenchPanel aria-label="Search" className="overflow-auto">
+        {/* The slot forwards this handler to result clicks; it never reads the editor ref while rendering. */}
+        {/* eslint-disable-next-line react-hooks/refs */}
+        {renderSearch((path) => void openFile(path))}
+      </WorkbenchPanel>
     ) : (
       <ActivityPlaceholder activityId={activeActivity} />
     );
@@ -419,7 +489,10 @@ export function VSCodeWorkbench({
           activeActivity: activeActivity === "chat" ? "explorer" : activeActivity,
         })
       }
-      onToggleMaximize={() => updateWorkbench({ rightMaximized: !rightMaximized })}
+      onToggleMaximize={() => {
+        if (!rightMaximized) secondaryWidthBeforeMaximize.current = secondaryPanel.current?.getSize().inPixels ?? 300;
+        updateWorkbench({ rightMaximized: !rightMaximized });
+      }}
     />
   );
 
@@ -440,8 +513,6 @@ export function VSCodeWorkbench({
         onToggleRightPane={toggleRightPane}
         updateStatus={downloadStatus}
         updateProgress={updateProgress}
-        isCheckingForUpdates={isCheckingForUpdates}
-        onCheckForUpdates={!updateAvailable ? checkForUpdates : undefined}
         onDownloadUpdate={updateAvailable ? () => void downloadUpdate() : undefined}
         onInstallUpdate={updateAvailable ? () => void installUpdate() : undefined}
         onOpenReleaseNotes={() => setReleaseNotesOpen(true)}
@@ -454,14 +525,11 @@ export function VSCodeWorkbench({
           theme={theme}
           onActiveChange={selectActivity}
           onThemeChange={onThemeChange}
+          onSettings={() => onSettingsOpenChange?.(true)}
         />
 
-        {rightOpen && rightMaximized ? (
-          <div className="min-w-0 flex-1 pe-1">{secondary}</div>
-        ) : (
           <ResizablePanelGroup
-            key={panelLayoutKey}
-            id={panelLayoutKey}
+            id="workbench-panes"
             orientation="horizontal"
             defaultLayout={defaultLayout}
             onLayoutChanged={(layout, meta) => {
@@ -471,26 +539,28 @@ export function VSCodeWorkbench({
             }}
             className="min-w-0 flex-1 pe-1"
           >
-            {leftOpen ? (
-              <>
                 <ResizablePanel
                   id="primary-sidebar"
+                  panelRef={primaryPanel}
+                  collapsible
                   defaultSize="296px"
                   minSize="190px"
                   maxSize="45%"
                 >
                   {primary}
                 </ResizablePanel>
-                <WorkbenchResizeHandle label="Resize primary side bar" />
-              </>
-            ) : null}
+                <WorkbenchResizeHandle label="Resize primary side bar" hidden={!leftOpen || rightMaximized} />
 
-            <ResizablePanel id="editor" minSize="280px">
+            <ResizablePanel id="editor" panelRef={editorPanel} collapsible minSize="280px">
               <div className="h-full overflow-hidden rounded-[6px] border border-[var(--workbench-border)] bg-[var(--workbench-editor)] shadow-[0_1px_2px_var(--workbench-shadow)]">
                 <EditorArea
                   ref={editorRef}
                   renderEditor={(tab, updateTab) =>
-                    tab.id === "workbench:journal" && journal ? (
+                    tab.id === "workbench:graph" && renderGraph ? renderGraph(
+                      (path) => void openFile(path),
+                      (placement) => editorRef.current?.splitActive(placement),
+                      () => updateWorkbench({ activeActivity: "search", leftOpen: true })
+                    ) : tab.id === "workbench:journal" && journal ? (
                       <JournalCalendar
                         {...journal}
                         onOpenEntry={async (path) => {
@@ -508,7 +578,7 @@ export function VSCodeWorkbench({
                         }}
                       />
                     ) : (
-                      renderEditor?.(tab, updateTab)
+                      renderEditor?.(tab, updateTab, (path) => void openFile(path))
                     )
                   }
                   onMoveToNewWindow={onMoveEditorToNewWindow}
@@ -539,32 +609,25 @@ export function VSCodeWorkbench({
               </div>
             </ResizablePanel>
 
-            {rightOpen ? (
-              <>
-                <WorkbenchResizeHandle label="Resize secondary side bar" />
+                <WorkbenchResizeHandle label="Resize secondary side bar" hidden={!rightOpen || rightMaximized} />
                 <ResizablePanel
                   id="secondary-sidebar"
+                  panelRef={secondaryPanel}
+                  collapsible
                   defaultSize="300px"
                   minSize="240px"
-                  maxSize="50%"
+                  maxSize={rightMaximized ? "100%" : "50%"}
                 >
                   {secondary}
                 </ResizablePanel>
-              </>
-            ) : null}
           </ResizablePanelGroup>
-        )}
       </main>
 
       <WorkbenchFooter
-        words={
-          words ??
-          (activeTab
-            ? (activeTab.content?.trim().split(/\s+/).filter(Boolean).length ?? 0)
-            : undefined)
-        }
-        characters={characters ?? activeTab?.content?.length}
-        backlinks={backlinks}
+        {...documentStatistics(activeTab, { words, characters, backlinks })}
+        onShowBacklinks={renderBacklinks ? () => selectActivity("backlinks") : undefined}
+        cpuPercent={cpuPercent}
+        memoryMB={memoryMB}
         left={
           <GroupButton>
             <Button variant="ghost" size="xs" type="button" title="Current branch">
@@ -593,6 +656,7 @@ export function VSCodeWorkbench({
             </Button>
             <NotificationCenter
               notifications={notifications}
+              onQuickCapture={onQuickCapture}
               onNotificationClick={openReleaseNotes}
               onAction={(_notificationId, actionId) => {
                 if (actionId === "download") void downloadUpdate();
@@ -628,6 +692,17 @@ export function VSCodeWorkbench({
         onDownload={() => void downloadUpdate()}
       />
 
+      <WorkbenchSettingsDialog
+        open={settingsOpen}
+        theme={theme}
+        update={update}
+        checking={isCheckingForUpdates}
+        canCheckForUpdates={Boolean(onCheckForUpdates)}
+        onOpenChange={(open) => onSettingsOpenChange?.(open)}
+        onThemeChange={onThemeChange}
+        onCheckForUpdates={() => void checkForUpdates()}
+      />
+
       <CommandPalette
         open={commandOpen}
         onOpenChange={setCommandOpen}
@@ -655,10 +730,12 @@ function renamedPath(path: string, name: string) {
   return parent ? `${parent}/${name}` : name;
 }
 
-function WorkbenchResizeHandle({ label }: { label: string }) {
+function WorkbenchResizeHandle({ label, hidden }: { label: string; hidden?: boolean }) {
   return (
     <ResizableHandle
       aria-label={label}
+      disabled={hidden}
+      style={hidden ? { display: "none" } : undefined}
       className="w-1 bg-transparent after:w-1 after:bg-transparent hover:after:bg-[var(--workbench-focus)] focus-visible:ring-0 focus-visible:after:bg-[var(--workbench-focus)]"
     />
   );

@@ -1,4 +1,4 @@
-import { createClientStatePersistence, FluxApp, type FluxRuntime } from "@flux/app-core";
+import { createClientStatePersistence, FluxApp, QuickCapture, type FluxRuntime } from "@flux/app-core";
 import { DesktopFluxClient } from "@flux/client-desktop";
 
 const client = window.electronAPI ? new DesktopFluxClient(window.electronAPI) : null;
@@ -11,6 +11,7 @@ const desktopRuntime: FluxRuntime = {
   statePersistence,
   getWindowId: async () => window.electronAPI?.getWindowId() ?? "main",
   hideWindow: async () => window.electronAPI?.hideWindow(),
+  showQuickCapture: async () => window.electronAPI?.showQuickCapture(),
   getMCPServerCommand: async () =>
     window.electronAPI?.getMCPServerCommand() ?? { command: "", args: [] },
   onCommand: (handler) =>
@@ -19,7 +20,9 @@ const desktopRuntime: FluxRuntime = {
         command === "search" ||
         command === "daily-today" ||
         command === "calendar" ||
-        command === "settings"
+        command === "settings" ||
+        command === "vaults" ||
+        command === "updates"
       ) {
         handler(command);
       }
@@ -52,5 +55,8 @@ const desktopRuntime: FluxRuntime = {
 };
 
 export default function App() {
+  if (new URLSearchParams(window.location.search).get("quickCapture") === "1") {
+    return <QuickCapture runtime={desktopRuntime} />;
+  }
   return <FluxApp runtime={desktopRuntime} windowControlsInset={72} />;
 }

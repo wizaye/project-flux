@@ -15,6 +15,7 @@ import { WorkbenchIcon } from "../shared/workbench-icon";
 export type EditorRenderer = (
   tab: EditorTab,
   update: (changes: Partial<Omit<EditorTab, "id">>) => void,
+  onOpenDocument?: (path: string) => void,
 ) => ReactNode;
 
 type EditorSurfaceProps = {
@@ -27,6 +28,7 @@ type EditorSurfaceProps = {
 
 export function EditorSurface({ tab, active = true, onChange, onUpdate, renderEditor }: EditorSurfaceProps) {
   if (!tab) return <EmptyEditor />;
+  if (tab.id.startsWith("workbench:")) return renderEditor?.(tab, onUpdate ?? (() => undefined)) ?? null;
 
   const segments = tab.id.startsWith("file:")
     ? tab.id.slice(5).split("/").filter(Boolean)

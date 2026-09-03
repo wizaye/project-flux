@@ -196,7 +196,7 @@ func TestGraphUsesPathsAndNeverCollapsesDuplicateNames(t *testing.T) {
 		kind          domain.FileKind
 	}{
 		{"notes/start.md", "[[../one/route.md]] [[route]] [[target]] [[Not created]]", domain.FileKindMarkdown},
-		{"notes/target.md", "target", domain.FileKindMarkdown},
+		{"notes/target.md", "---\ntags: [focus]\n---\ntarget", domain.FileKindMarkdown},
 		{"one/route.md", "one", domain.FileKindMarkdown},
 		{"two/route.md", "two", domain.FileKindMarkdown},
 		{"src/ignored.ts", "export const ignored = true", domain.FileKindText},
@@ -217,6 +217,9 @@ func TestGraphUsesPathsAndNeverCollapsesDuplicateNames(t *testing.T) {
 	labels := map[string]string{}
 	for _, node := range graph.Nodes {
 		labels[node.Path] = node.Label
+		if node.Path == "notes/target.md" && (len(node.Tags) != 1 || node.Tags[0] != "focus") {
+			t.Fatalf("graph omitted indexed tags: %#v", node)
+		}
 	}
 	if labels["one/route.md"] != "route.md" || labels["two/route.md"] != "route.md" {
 		t.Fatalf("duplicate nodes lost their display names: %#v", labels)

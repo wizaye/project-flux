@@ -2679,7 +2679,7 @@ export function useFluxAppController({ runtime }: Pick<FluxAppProps, "runtime">)
   });
 
   const handleRuntimeCommand = useEffectEvent(
-    (command: "search" | "daily-today" | "calendar" | "settings") => {
+    (command: "search" | "daily-today" | "calendar" | "settings" | "vaults" | "updates") => {
       if (command === "search") setLeftSidebarPane("search");
       if (command === "daily-today") void openDailyNote(localDateKey());
       if (command === "calendar") setCalendarOpen(true);

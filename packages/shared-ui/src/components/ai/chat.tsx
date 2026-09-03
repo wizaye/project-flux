@@ -11,6 +11,7 @@ import {
 import { Thread } from "../assistant-ui/thread";
 import { ChatComposerControls, ChatContextUsage } from "./chat/chat-controls";
 import { ChatSessionHeader } from "./chat/chat-session-header";
+import { readDroppedTab } from "../design-system/workbench/editor/editor-dnd";
 import {
   CHAT_ATTACHMENTS,
   createPreviewModelAdapter,
@@ -33,6 +34,8 @@ export type ChatMessage = {
   text?: string;
   content?: ThreadMessageLike["content"];
   createdAt?: Date;
+  metadata?: ThreadMessageLike["metadata"];
+  status?: ThreadMessageLike["status"];
 };
 
 export type ChatModelAdapterFactory = (
@@ -53,6 +56,7 @@ export type ChatProps = {
   onDeleteSession?: (id: string) => void;
   onSend?: (message: string) => void;
   onConfigurationChange?: (configuration: ChatConfiguration) => void;
+  onResolveAttachment?: (path: string) => Promise<File>;
 };
 
 const DEFAULT_SESSIONS: ChatSession[] = [
@@ -80,6 +84,7 @@ export function Chat({
   onDeleteSession,
   onSend,
   onConfigurationChange,
+  onResolveAttachment,
 }: ChatProps) {
   const controlled = sessions !== undefined;
   const [localSessions, setLocalSessions] = React.useState<ChatSession[]>(
@@ -163,6 +168,7 @@ export function Chat({
             modelAdapterFactory={modelAdapterFactory}
             onConfigurationChange={updateConfiguration}
             onSend={onSend}
+            onResolveAttachment={onResolveAttachment}
           />
         ) : null}
       </div>
@@ -178,6 +184,7 @@ function ChatRuntime({
   modelAdapterFactory,
   onConfigurationChange,
   onSend,
+  onResolveAttachment,
 }: {
   sessionId: string;
   configuration: ChatConfiguration;
@@ -186,7 +193,9 @@ function ChatRuntime({
   modelAdapterFactory?: ChatModelAdapterFactory;
   onConfigurationChange: (configuration: ChatConfiguration) => void;
   onSend?: (message: string) => void;
+  onResolveAttachment?: (path: string) => Promise<File>;
 }) {
+  const [dropError, setDropError] = React.useState<string>();
   const adapter = React.useMemo(
     () =>
       modelAdapterFactory?.(sessionId, () => configuration) ??
@@ -199,16 +208,45 @@ function ChatRuntime({
       role: message.role,
       content: message.content ?? message.text ?? "",
       createdAt: message.createdAt ?? new Date(),
+      metadata: message.metadata,
       status:
         message.role === "assistant"
-          ? ({ type: "complete", reason: "stop" } as const)
+          ? (message.status ?? { type: "complete", reason: "stop" } as const)
           : undefined,
     })),
     adapters: { attachments: CHAT_ATTACHMENTS },
   });
 
   return (
-    <div className="h-full">
+    <div
+      className="flex h-full min-h-0 flex-col"
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.some((type) => type === "Files" || type.startsWith("application/x-flux-"))) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDrop={(event) => {
+        const files = Array.from(event.dataTransfer.files);
+        const internal = event.dataTransfer.types.some((type) => type.startsWith("application/x-flux-"));
+        if (!files.length && !internal) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const tab = internal ? readDroppedTab(event.dataTransfer)?.tab : undefined;
+        setDropError(undefined);
+        void (async () => {
+          if (tab?.id.startsWith("file:")) {
+            if (!onResolveAttachment) throw new Error("Open a vault before attaching workspace files.");
+            files.push(await onResolveAttachment(tab.id.slice(5)));
+          }
+          for (const file of files) {
+            if (file.size > 10 * 1024 * 1024) throw new Error("Attachments must be smaller than 10 MB.");
+            await runtime.thread.composer.addAttachment(file);
+          }
+        })().catch((error) => setDropError(error instanceof Error ? error.message : "Could not attach file"));
+      }}
+    >
+      {dropError ? <p role="alert" className="px-3 py-2 text-sm text-destructive">{dropError}</p> : null}
       <AssistantRuntimeProvider runtime={runtime}>
         <Thread
           composerControls={

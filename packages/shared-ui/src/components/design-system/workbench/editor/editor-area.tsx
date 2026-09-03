@@ -88,15 +88,17 @@ export const EditorArea = React.forwardRef<EditorAreaHandle, EditorAreaProps>(fu
       dispatch({ type: "split", groupId: model.activeGroupId, placement }),
   }));
 
+  const notifyTabsChange = React.useEffectEvent((tabs: EditorTab[]) => onTabsChange?.(tabs));
+  const notifyActiveTabChange = React.useEffectEvent((tab?: EditorTab) => onActiveTabChange?.(tab));
   React.useEffect(() => {
     const openIds = [...new Set(model.groups.flatMap((group) => group.tabIds))];
-    onTabsChange?.(openIds.flatMap((id) => (model.documents[id] ? [model.documents[id]] : [])));
-  }, [model.documents, model.groups, onTabsChange]);
+    notifyTabsChange(openIds.flatMap((id) => (model.documents[id] ? [model.documents[id]] : [])));
+  }, [model.documents, model.groups]);
 
   React.useEffect(() => {
     const group = getGroup(model, model.activeGroupId);
-    onActiveTabChange?.(group?.activeTabId ? model.documents[group.activeTabId] : undefined);
-  }, [model, onActiveTabChange]);
+    notifyActiveTabChange(group?.activeTabId ? model.documents[group.activeTabId] : undefined);
+  }, [model]);
 
   function splitEditor(groupId: EditorGroupId, placement: SplitPlacement) {
     const group = getGroup(model, groupId);
@@ -384,7 +386,7 @@ function EditorGroup({
         onValueChange={(value) => onActivate(String(value))}
         className="h-full min-h-0 flex-col gap-0"
       >
-        <EditorHeader
+        {tabs.length ? <EditorHeader
           group={group}
           tabs={tabs}
           activeTabId={activeTabId}
@@ -404,7 +406,7 @@ function EditorGroup({
             onDropTab("center", dataTransfer, targetIndex, copy)
           }
           onDragEnd={clearDragState}
-        />
+        /> : null}
 
         {tabs.length ? (
           <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -436,7 +438,7 @@ function EditorGroup({
         )}
       </Tabs>
 
-      <DropPreview placement={dropPlacement} />
+      <DropPreview placement={dropPlacement} withHeader={tabs.length > 0} />
       <span className="sr-only" role="status">
         {dropPlacement ? `Drop to open in the ${dropPlacement} editor area` : ""}
       </span>
@@ -444,18 +446,19 @@ function EditorGroup({
   );
 }
 
-function DropPreview({ placement }: { placement: DropPlacement | null }) {
+function DropPreview({ placement, withHeader }: { placement: DropPlacement | null; withHeader: boolean }) {
   if (!placement) return null;
   return (
     <div
       aria-hidden="true"
       className={cn(
         "pointer-events-none absolute z-20 bg-[var(--workbench-drop)] transition-[inset,width,height] duration-100 ease-out",
-        placement === "left" && "top-[35px] right-1/2 bottom-0 left-0",
-        placement === "center" && "inset-x-0 top-[35px] bottom-0",
-        placement === "right" && "top-[35px] right-0 bottom-0 left-1/2",
-        placement === "top" && "inset-x-0 top-[35px] bottom-[calc(50%-17.5px)]",
-        placement === "bottom" && "inset-x-0 top-[calc(50%+17.5px)] bottom-0"
+        placement === "left" && "right-1/2 bottom-0 left-0",
+        placement === "center" && "inset-x-0 bottom-0",
+        placement === "right" && "right-0 bottom-0 left-1/2",
+        placement === "top" && "inset-x-0 bottom-1/2",
+        placement === "bottom" && "inset-x-0 top-1/2 bottom-0",
+        withHeader ? "top-[35px]" : "top-0"
       )}
     />
   );

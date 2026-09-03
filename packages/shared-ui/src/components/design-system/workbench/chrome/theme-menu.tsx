@@ -12,9 +12,10 @@ import {
 export type ThemeMenuProps = {
   theme: WorkbenchTheme;
   onThemeChange: (theme: WorkbenchTheme) => void;
+  onSettings: () => void;
 };
 
-export function ThemeMenu({ theme, onThemeChange }: ThemeMenuProps) {
+export function ThemeMenu({ theme, onThemeChange, onSettings }: ThemeMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -45,7 +46,7 @@ export function ThemeMenu({ theme, onThemeChange }: ThemeMenuProps) {
           />
         </DropdownMenuGroup>
         <WorkbenchMenuSeparator />
-        <WorkbenchMenuItem>
+        <WorkbenchMenuItem onClick={onSettings}>
           <WorkbenchIcon name="settings" />
           Settings
         </WorkbenchMenuItem>

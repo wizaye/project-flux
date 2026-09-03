@@ -1,6 +1,6 @@
 {
   "name": "@flux/desktop",
-  "version": "0.0.2",
+  "version": "0.0.1",
   "description": "FLUX personal knowledge management desktop application",
   "author": "FLUX Contributors",
   "private": true,
@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "bun run clean:build && bun run build:server && tsc --noEmit && vite build && electron-builder",
-    "release": "bun run clean:build && bun run build:server && tsc --noEmit && vite build && electron-builder --publish always",
+    "release": "bun run build:server && tsc --noEmit && vite build && electron-builder --mac dmg --publish never",
     "build:server": "mkdir -p resources && ${GO_BIN:-/usr/local/go/bin/go} -C ../../server build -tags sqlite_fts5 -o ../apps/desktop/resources/flux-server .",
     "preview": "vite preview",
     "lint": "eslint . --max-warnings 0",
@@ -46,7 +46,10 @@
     "files": [
       "dist/**",
       "dist-electron/**",
-      "package.json"
+      "package.json",
+      "!node_modules/@flux/**/*",
+      "!node_modules/**/.turbo{,/**/*}",
+      "!node_modules/**/.cache{,/**/*}"
     ],
     "extraResources": [
       {
@@ -62,7 +65,15 @@
     },
     "mac": {
       "category": "public.app-category.productivity",
-      "target": ["dmg", "zip"]
+      "identity": null,
+      "hardenedRuntime": false,
+      "target": ["dmg"]
+    },
+    "win": {
+      "target": ["nsis"]
+    },
+    "linux": {
+      "target": ["AppImage"]
     }
   }
 }

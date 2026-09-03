@@ -109,6 +109,7 @@ export interface GraphNode {
   path?: string;
   label: string;
   kind: FileEntry["kind"] | "missing";
+  tags?: string[];
 }
 
 export interface GraphEdge {

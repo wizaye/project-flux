@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import type { RecentVault } from "@flux/bridge-contract";
 import { Button } from "@flux/shared-ui/components/ui/button";
-import { useAppStore } from "../app/state";
+import { Input } from "@flux/shared-ui/components/ui/input";
+import { Textarea } from "@flux/shared-ui/components/ui/textarea";
+import { ThemeProvider, type Theme } from "@flux/shared-ui/components/theme-provider";
 import { errorMessage } from "../app/helpers";
 import { dateKeyInTimeZone, loadDailyNoteConfig, noteFileName, noteTemplate } from "../daily-notes/config";
 import { quickCaptureInboxPath } from "./path";
 import type { FluxRuntime } from "../App";
 
 export function QuickCapture({ runtime }: { runtime: FluxRuntime }) {
+  const [theme, setTheme] = useState<Theme>("system");
   const [vaults, setVaults] = useState<RecentVault[]>([]);
   const [vaultId, setVaultId] = useState("");
   const [target, setTarget] = useState<"inbox" | "daily">("inbox");
@@ -29,14 +32,10 @@ export function QuickCapture({ runtime }: { runtime: FluxRuntime }) {
           runtime.client.listRecentVaults(),
           runtime.client.getAppSettings(),
         ]);
-        if (
-          settings.theme === "dark" ||
-          settings.theme === "light" ||
-          settings.theme === "system"
-        ) {
-          useAppStore.getState().setSetting("theme", settings.theme);
+        const savedTheme = settings["workbench.theme"] ?? settings.theme;
+        if (savedTheme === "dark" || savedTheme === "light" || savedTheme === "system") {
+          setTheme(savedTheme);
         }
-        useAppStore.getState().hydrate(settings);
         setVaults(recent);
         const configured = String(settings.quickCaptureVaultId ?? "");
         const draft =
@@ -49,7 +48,7 @@ export function QuickCapture({ runtime }: { runtime: FluxRuntime }) {
             ? draftVaultId
             : recent.some((item) => item.vaultId === configured)
               ? configured
-              : ""
+              : (recent[0]?.vaultId ?? "")
         );
         if (typeof draft?.content === "string") setContent(draft.content);
         if (typeof draft?.fileName === "string") setFileName(draft.fileName);
@@ -59,19 +58,20 @@ export function QuickCapture({ runtime }: { runtime: FluxRuntime }) {
   }, [runtime]);
 
   useEffect(() => {
-    if (!runtime.client || !content.trim()) return;
+    if (!runtime.client || !content.trim() || saving) return;
     const timer = window.setTimeout(() => {
       void runtime.client?.putAppSetting("quickCaptureDraft", {
         vaultId,
         target,
         fileName,
         content,
-      });
+      }).catch((cause) => setError(errorMessage(cause)));
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [runtime.client, vaultId, target, fileName, content]);
+  }, [runtime.client, vaultId, target, fileName, content, saving]);
 
   const save = async () => {
+    if (saving) return;
     if (!runtime.client) {
       setError("Unable to connect to FLUX. Try again.");
       return;
@@ -155,6 +155,7 @@ export function QuickCapture({ runtime }: { runtime: FluxRuntime }) {
   };
 
   return (
+    <ThemeProvider theme={theme}>
     <main className="flex h-screen flex-col bg-sidebar text-foreground">
       <header className="flex h-11 shrink-0 items-center border-b ps-[76px] pe-4 [border-color:var(--layout-separator)] [-webkit-app-region:drag]">
         <h1 className="text-sm font-medium tracking-[-0.01em]">Quick capture</h1>
@@ -198,7 +199,7 @@ export function QuickCapture({ runtime }: { runtime: FluxRuntime }) {
         {target === "inbox" ? (
           <label className="grid gap-1 text-[11px] font-medium text-foreground/70">
             Filename
-            <input
+            <Input
               ref={fileNameRef}
               value={fileName}
               aria-invalid={Boolean(error && !quickCaptureInboxPath("", fileName))}
@@ -208,13 +209,13 @@ export function QuickCapture({ runtime }: { runtime: FluxRuntime }) {
                 setError("");
               }}
               placeholder="Quick note.md"
-              className="h-8 rounded-md border bg-popover px-2 text-xs font-normal text-foreground outline-none placeholder:text-foreground/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar"
+              className="h-8"
             />
           </label>
         ) : null}
         <label className="flex min-h-0 flex-1 flex-col gap-1 text-[11px] font-medium text-foreground/70">
           Note
-          <textarea
+          <Textarea
             ref={contentRef}
             autoFocus
             value={content}
@@ -228,7 +229,7 @@ export function QuickCapture({ runtime }: { runtime: FluxRuntime }) {
               if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void save();
             }}
             placeholder="Write a note…"
-            className="min-h-0 flex-1 resize-none rounded-lg border bg-background p-3 text-sm font-normal leading-6 text-foreground outline-none placeholder:text-foreground/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar [border-color:var(--layout-separator)]"
+            className="min-h-0 flex-1 resize-none field-sizing-fixed font-normal leading-6"
           />
         </label>
         <div className="flex min-h-8 items-center justify-between gap-3">
@@ -250,5 +251,6 @@ export function QuickCapture({ runtime }: { runtime: FluxRuntime }) {
         </div>
       </div>
     </main>
+    </ThemeProvider>
   );
 }

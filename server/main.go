@@ -29,6 +29,10 @@ import (
 )
 
 func main() {
+	if version := os.Getenv("FLUX_VERSION"); version != "" {
+		application.Version = version
+	}
+
 	if len(os.Args) > 1 && os.Args[1] == "mcp" {
 		if err := runMCPBridge(os.Args[2:]); err != nil {
 			log.Fatal(err)

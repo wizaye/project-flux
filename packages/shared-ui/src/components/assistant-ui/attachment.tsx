@@ -183,7 +183,10 @@ const AttachmentUI: FC = () => {
               "aui-attachment-root-message only:*:first:size-24",
           )}
         >
-          <AttachmentPreviewDialog>
+          {!isImage ? <div className="flex h-9 max-w-56 items-center gap-2 rounded-md border bg-muted py-1 ps-2 pe-8 text-xs">
+            <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+            <span className="truncate"><AttachmentPrimitive.Name /></span>
+          </div> : <AttachmentPreviewDialog>
             <TooltipTrigger render={<div className={cn(
                                         "aui-attachment-tile bg-muted hover:after:bg-foreground/10 focus-visible:ring-ring/50 relative size-14 cursor-pointer overflow-hidden rounded-[calc(var(--composer-radius,1.5rem)-var(--composer-padding,8px))] transition-transform outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:ring-1 after:ring-black/10 after:transition-colors after:ring-inset focus-visible:ring-1 active:scale-[0.96] motion-reduce:transition-none dark:after:ring-white/10",
                                         isError &&
@@ -214,7 +217,7 @@ const AttachmentUI: FC = () => {
                                           <AlertCircleIcon className="text-destructive size-4" />
                                         </div>
                                       )}</TooltipTrigger>
-          </AttachmentPreviewDialog>
+          </AttachmentPreviewDialog>}
           {isComposer && <AttachmentRemove />}
         </AttachmentPrimitive.Root>
         <TooltipContent side="top">

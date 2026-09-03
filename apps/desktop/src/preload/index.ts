@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   ping: () => ipcRenderer.invoke("ping"),
   getWindowId: () => ipcRenderer.invoke("get-window-id"),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
+  showQuickCapture: () => ipcRenderer.invoke("show-quick-capture"),
   getMCPServerCommand: () => ipcRenderer.invoke("get-mcp-server-command"),
   onCommand: (handler: (command: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, command: string) => handler(command);
@@ -29,7 +30,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openWindow: (url: string) => ipcRenderer.invoke("open-window", url),
   onBeforeClose: (handler: () => Promise<void>) => {
     const listener = () => {
-      void handler().finally(() => ipcRenderer.send("flux-close-ready"));
+      void handler().then(
+        () => ipcRenderer.send("flux-close-ready"),
+        (error) => ipcRenderer.send("flux-close-failed", error instanceof Error ? error.message : "Could not save changes")
+      );
     };
     ipcRenderer.on("flux-before-close", listener);
     return () => ipcRenderer.off("flux-before-close", listener);
@@ -41,7 +45,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     marginMillimetres: number;
     scale: number;
   }) => ipcRenderer.invoke("export-pdf", options),
-  selectVaultDirectory: (mode: "open" | "create") =>
+  selectVaultDirectory: (mode: "open" | "create" | "location") =>
     ipcRenderer.invoke("select-vault-directory", mode),
   fluxFetch: (request: { url: string; method?: string; body?: string }) =>
     ipcRenderer.invoke("flux-fetch", request),

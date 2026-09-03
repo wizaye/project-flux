@@ -557,7 +557,7 @@ function HighlightedText({
   });
 }
 
-function SearchPane({
+export function SearchPane({
   searchVault,
   onOpenDocument,
   query,

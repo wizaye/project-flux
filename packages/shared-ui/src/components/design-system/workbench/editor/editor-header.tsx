@@ -153,7 +153,7 @@ export function EditorHeader({
                 clearDragState();
               }}
               className={cn(
-                "group/tab relative mx-[2px] flex h-[30px] min-w-[96px] max-w-[220px] flex-none items-center rounded-[4px] text-[var(--workbench-muted)] hover:bg-[var(--workbench-hover)] hover:text-[var(--workbench-fg)] has-[>[data-active]]:text-[var(--workbench-fg)]",
+                "group/tab relative mx-[2px] flex h-[30px] min-w-[96px] max-w-[220px] flex-none items-center rounded-[7px] text-[var(--workbench-muted)] hover:bg-[var(--workbench-hover)] hover:text-[var(--workbench-fg)] has-[>[data-active]]:text-[var(--workbench-fg)]",
                 active
                   ? "has-[>[data-active]]:bg-[var(--workbench-tab-active)]"
                   : "has-[>[data-active]]:bg-[var(--workbench-tab-unfocused)] has-[>[data-active]]:text-[var(--workbench-muted)]",
@@ -167,7 +167,7 @@ export function EditorHeader({
               <TabsTrigger
                 value={tab.id}
                 aria-label={tab.title}
-                className="h-full min-w-0 flex-1 justify-start rounded-[4px] border-0 bg-transparent px-2 text-[13px] font-normal leading-none text-inherit transition-none after:hidden data-active:bg-transparent data-active:text-inherit"
+                className="h-full min-w-0 flex-1 justify-start rounded-[7px] border-0 bg-transparent px-2 text-[13px] font-normal leading-none text-inherit transition-none after:hidden data-active:bg-transparent data-active:text-inherit"
               >
                 <WorkbenchIcon name={fileIconName(tab.title)} />
                 <span className="min-w-0 flex-1 truncate text-start">{tab.title}</span>

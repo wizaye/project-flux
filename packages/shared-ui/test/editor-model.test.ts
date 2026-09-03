@@ -4,8 +4,19 @@ import {
   createEditorModel,
   editorReducer,
   getGroup,
+  documentStatistics,
   type EditorLayoutNode,
 } from "../src/components/design-system/workbench/editor/editor-model";
+
+test("only editable file tabs expose document statistics", () => {
+  for (const id of ["workbench:journal", "workbench:graph"]) {
+    expect(documentStatistics({ id, title: id }, { words: 30, characters: 200, backlinks: 2 })).toEqual({});
+  }
+  expect(documentStatistics()).toEqual({});
+  expect(documentStatistics({ id: "file:image.png", title: "image.png", readOnly: true })).toEqual({});
+  expect(documentStatistics({ id: "file:note.md", title: "note.md", content: "one two" }, { backlinks: 2 }))
+    .toEqual({ words: 2, characters: 7, backlinks: 2 });
+});
 
 test("split duplicates view state while documents stay shared", () => {
   const tab = { id: "notes.md", title: "notes.md", content: "one" };

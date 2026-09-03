@@ -26,6 +26,7 @@ export class AgentTurnProjection {
   private startedAt = performance.now();
   private usage?: AgentEventPayloadMap["turn.completed"]["usage"];
   private chunks = 0;
+  private finalStatus: ChatMessage["status"];
 
   constructor(
     private readonly modelLabel: string,
@@ -185,6 +186,11 @@ export class AgentTurnProjection {
       }
       case "turn.completed":
         this.usage = event.payload.usage;
+        this.finalStatus = event.payload.status === "completed"
+          ? { type: "complete", reason: "stop" }
+          : { type: "incomplete", reason: event.payload.status === "interrupted" ? "cancelled" : "error" };
+        this.parts = this.parts.map((part) => part.type === "text" || part.type === "reasoning"
+          ? { ...part, status: { type: "complete" } } : part);
         break;
       default:
         break;
@@ -193,6 +199,14 @@ export class AgentTurnProjection {
 
   content(): readonly ThreadAssistantMessagePart[] {
     return this.parts.map((part) => ({ ...part }));
+  }
+
+  status(): ChatMessage["status"] {
+    if (this.finalStatus) return this.finalStatus;
+    if (this.parts.some((part) => part.type === "tool-call" && part.approval && !part.approval.optionId)) {
+      return { type: "requires-action", reason: "tool-calls" };
+    }
+    return { type: "incomplete", reason: "cancelled" };
   }
 
   metadata(): StreamMetadata {
@@ -288,6 +302,8 @@ export function projectAgentHistory(thread: AgentThread, events: readonly AgentE
         role: "assistant",
         content: turn.projection.content(),
         createdAt: turn.createdAt,
+        metadata: turn.projection.metadata(),
+        status: turn.projection.status(),
       });
     }
   }

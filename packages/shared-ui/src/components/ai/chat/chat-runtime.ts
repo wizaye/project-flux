@@ -268,6 +268,12 @@ class GenericFileAttachmentAdapter implements AttachmentAdapter {
   }
 
   async send(attachment: PendingAttachment): Promise<CompleteAttachment> {
+    const isCode = /\.(?:[cm]?[jt]sx?|py|go|rs|rb|java|c|h|cpp|hpp|sh|bash|zsh|sql|yaml|yml|toml|ini|md|txt|json|xml|css|html)$/i.test(attachment.name);
+    if (isCode) {
+      const text = await attachment.file.text();
+      if (text.includes("\0")) throw new Error("This file contains binary data.");
+      return { ...attachment, status: { type: "complete" }, content: [{ type: "text", text: `Attached file ${JSON.stringify(attachment.name)}:\n${text}` }] };
+    }
     return {
       ...attachment,
       status: { type: "complete" },

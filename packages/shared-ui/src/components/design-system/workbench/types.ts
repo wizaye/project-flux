@@ -1,8 +1,10 @@
 import type { ChatProps } from "../../ai/chat";
+import type { ReactNode } from "react";
 import type { EditorRenderer } from "./editor/editor-surface";
 import type { EditorTab } from "./editor/editor-model";
 
 export type WorkbenchTheme = "dark" | "light";
+export type WorkbenchNativeCommand = "search" | "daily-today" | "calendar" | "settings" | "vaults" | "updates";
 
 export interface WorkbenchUpdate {
   currentVersion: string;
@@ -75,14 +77,22 @@ export interface VSCodeWorkbenchProps {
   update?: WorkbenchUpdate;
   updateStatus?: WorkbenchUpdateStatus;
   updateProgress?: number;
+  settingsOpen?: boolean;
+  onSettingsOpenChange?: (open: boolean) => void;
   onCheckForUpdates?: () => Promise<void>;
   onDownloadUpdate?: () => Promise<void>;
   onInstallUpdate?: () => Promise<void>;
   onThemeChange: (theme: WorkbenchTheme) => void;
   onStateChange?: (state: WorkbenchSnapshot) => void;
+  onQuickCapture?: () => Promise<void>;
+  onCommand?: (handler: (command: WorkbenchNativeCommand) => void) => () => void;
+  onOpenToday?: () => Promise<EditorTab | void>;
+  renderSearch?: (onOpenFile: (path: string) => void) => ReactNode;
   words?: number;
   characters?: number;
   backlinks?: number;
+  cpuPercent?: number;
+  memoryMB?: number;
   files?: readonly WorkbenchFile[];
   workspaceName?: string;
   workspaceOpen?: boolean;
@@ -100,5 +110,8 @@ export interface VSCodeWorkbenchProps {
   chat?: ChatProps;
   journal?: WorkbenchJournal;
   renderEditor?: EditorRenderer;
+  renderGraph?: (onOpenFile: (path: string) => void, onSplit: (placement: "right" | "bottom") => void, showSearch: () => void) => ReactNode;
+  renderBacklinks?: (onOpenFile: (path: string) => void) => ReactNode;
+  renderTags?: (showSearch: () => void) => ReactNode;
   onMoveEditorToNewWindow?: (tab: EditorTab) => void;
 }

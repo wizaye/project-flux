@@ -70,7 +70,7 @@ export function JournalCalendar({
   };
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-background" aria-label="Journal calendar">
+    <section className="flex h-full w-full min-h-0 min-w-0 flex-col bg-background" aria-label="Journal calendar">
       <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5">
         <CalendarDays className="size-4 text-muted-foreground" aria-hidden="true" />
         <h1 className="min-w-28 flex-1 truncate text-sm font-medium">{monthLabel}</h1>

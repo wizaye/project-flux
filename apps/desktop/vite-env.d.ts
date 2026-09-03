@@ -5,6 +5,7 @@ interface Window {
     ping: () => Promise<string>;
     getWindowId: () => Promise<string>;
     hideWindow: () => Promise<void>;
+    showQuickCapture: () => Promise<void>;
     getMCPServerCommand: () => Promise<{ command: string; args: string[] }>;
     onCommand: (handler: (command: string) => void) => () => void;
     checkForUpdates: () => Promise<{
@@ -32,7 +33,7 @@ interface Window {
       marginMillimetres: number;
       scale: number;
     }) => Promise<string | null>;
-    selectVaultDirectory: (mode: "open" | "create") => Promise<string | null>;
+    selectVaultDirectory: (mode: "open" | "create" | "location") => Promise<string | null>;
     fluxFetch: (request: {
       url: string;
       method?: string;

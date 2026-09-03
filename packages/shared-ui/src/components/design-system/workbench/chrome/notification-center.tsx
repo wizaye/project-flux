@@ -8,6 +8,7 @@ import type { WorkbenchNotification } from "../types";
 
 export interface NotificationCenterProps {
   notifications: readonly WorkbenchNotification[];
+  onQuickCapture?: () => void | Promise<void>;
   onAction: (notificationId: string, actionId: string) => void;
   onNotificationClick?: (notificationId: string) => void;
   onDismiss: (notificationId: string) => void;
@@ -22,6 +23,7 @@ const notificationIcons = {
 
 export function NotificationCenter({
   notifications,
+  onQuickCapture,
   onAction,
   onNotificationClick,
   onDismiss,
@@ -52,13 +54,29 @@ export function NotificationCenter({
       >
         <header className="flex h-9 items-center gap-2 border-b px-2.5">
           <PopoverTitle className="text-xs">Notifications</PopoverTitle>
+          {onQuickCapture ? (
+            <Button
+              variant="ghost"
+              size="xs"
+              type="button"
+              title="Quick Capture"
+              className="ms-auto"
+              onClick={() => {
+                setOpen(false);
+                void onQuickCapture();
+              }}
+            >
+              <WorkbenchIcon name="new-file" size={14} />
+              Quick Capture
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon-xs"
             type="button"
             aria-label="Clear all notifications"
             title="Clear all notifications"
-            className="ms-auto"
+            className={onQuickCapture ? undefined : "ms-auto"}
             disabled={!notifications.length}
             onClick={onClear}
           >

@@ -7,13 +7,10 @@ import {
   DialogTitle,
 } from "../../../ui/dialog";
 import { ScrollArea } from "../../../ui/scroll-area";
-import { Sparkles } from "lucide-react";
+import { LightbulbIcon, XIcon } from "lucide-react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../../reui/alert";
 import { Frame, FramePanel } from "../../reui/frame";
 import type { WorkbenchUpdate } from "../types";
-
-const releaseBannerUrl =
-  "https://images.unsplash.com/photo-1602422701241-7ba4f6fc1712?q=80&w=776&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D";
 
 export type UpdateDownloadStatus =
   | "checking"
@@ -54,38 +51,52 @@ export function ReleaseNotesDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-h-[calc(100dvh-2rem)] gap-4 overflow-hidden sm:max-w-[680px]"
+        showCloseButton={false}
+        className="max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden bg-transparent p-0 ring-0 sm:max-w-lg"
       >
         <DialogHeader className="sr-only">
           <DialogTitle>Codename {codename}</DialogTitle>
           <DialogDescription>Build {version}</DialogDescription>
         </DialogHeader>
 
-        <Frame className="min-h-0 overflow-hidden">
-          <FramePanel className="overflow-hidden p-0">
-            <div className="overflow-hidden border-b bg-muted">
-              <img
-                src={update?.bannerUrl ?? releaseBannerUrl}
-                alt={`${codename} release artwork`}
-                className="aspect-[20/7] w-full object-cover"
-              />
-            </div>
-            <Alert className="rounded-none border-0 shadow-none">
-              <Sparkles className="text-muted-foreground" aria-hidden="true" />
-              <AlertTitle>Codename {codename} · Build {version}</AlertTitle>
+        <Frame variant="ghost">
+          <FramePanel className="overflow-hidden p-0!">
+            <Alert variant="info" className="border-0 shadow-none">
+              <LightbulbIcon aria-hidden="true" />
+              <AlertTitle>New: Codename {codename}</AlertTitle>
               <AlertAction>
-                <Button type="button" variant="outline" size="xs" onClick={() => onOpenChange(false)}>
-                  Dismiss
-                </Button>
-                <Button type="button" size="xs" disabled={downloadStatus === "downloading" || downloadStatus === "ready"} onClick={onDownload}>
-                  {downloadStatus === "downloading" ? "Downloading…" : downloadStatus === "ready" ? "Downloaded" : downloadStatus === "error" ? "Retry" : "Update"}
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  aria-label="Close changelog"
+                  className="-mt-1 -mr-2 size-7 p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                  onClick={() => onOpenChange(false)}
+                >
+                  <XIcon className="size-3.5" />
                 </Button>
               </AlertAction>
               <AlertDescription>
-                <p className="mb-2 font-medium text-foreground">What&apos;s new</p>
+                <p className="mb-2 text-foreground">Build {version}</p>
                 <ScrollArea className="max-h-48">
-                  <div className="pr-4 leading-6">{releaseNotes}</div>
+                  <div className="whitespace-pre-wrap pe-4 leading-6">{releaseNotes}</div>
                 </ScrollArea>
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 underline"
+                  disabled={downloadStatus === "downloading" || downloadStatus === "ready"}
+                  onClick={onDownload}
+                >
+                  {downloadStatus === "downloading"
+                    ? "Downloading…"
+                    : downloadStatus === "ready"
+                      ? "Downloaded"
+                      : downloadStatus === "error"
+                        ? "Retry download"
+                        : "Download update"}
+                </Button>
               </AlertDescription>
             </Alert>
           </FramePanel>

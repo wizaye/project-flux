@@ -3,23 +3,11 @@ import { WebFluxClient } from "@flux/client-web";
 
 const client = new WebFluxClient();
 const statePersistence = createClientStatePersistence(client);
-const simulatedUpdate = import.meta.env.DEV
-  ? {
-      currentVersion: "0.0.1",
-      latestVersion: "0.1.0",
-      codename: "Atlas",
-      releaseNotes:
-        "What's new\n\n• VS Code-style update notifications\n• Release notes inside the app\n• Cleaner workbench interactions",
-    }
-  : undefined;
-
 const webRuntime: FluxRuntime = {
   label: "Web",
   client,
   vaultAccess: "registry",
   statePersistence,
-  checkForUpdates: async () => simulatedUpdate ?? { currentVersion: "web" },
-  downloadUpdate: async () => undefined,
   getWindowId: async () => {
     const key = "flux-window-id";
     const existing = sessionStorage.getItem(key);
@@ -39,7 +27,7 @@ const webRuntime: FluxRuntime = {
     }
   },
   selectVaultDirectory: async (mode) => {
-    if (mode === "open") return null;
+    if (mode !== "create") return null;
     const name = window.prompt("Vault name")?.trim();
     if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\\")) {
       return null;

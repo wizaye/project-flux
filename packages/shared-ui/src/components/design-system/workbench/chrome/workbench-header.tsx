@@ -1,4 +1,3 @@
-import { RefreshCwIcon } from "lucide-react";
 import { ButtonGroupDropdown } from "#components/design-system/button-with-dropdown";
 import { cn } from "../../../../lib/utils";
 import { Button } from "../../../ui/button";
@@ -18,9 +17,6 @@ export interface WorkbenchHeaderProps {
   onToggleRightPane: () => void;
   updateStatus?: UpdateDownloadStatus;
   updateProgress?: number;
-  isCheckingForUpdates?: boolean;
-  /** Called when user clicks "Check for updates" — only passed when no update is pending */
-  onCheckForUpdates?: () => Promise<void>;
   /** Called to download the update — only passed when an update is available */
   onDownloadUpdate?: () => void;
   onInstallUpdate?: () => void;
@@ -40,8 +36,6 @@ export function WorkbenchHeader({
   onToggleRightPane,
   updateStatus = "available",
   updateProgress,
-  isCheckingForUpdates = false,
-  onCheckForUpdates,
   onDownloadUpdate,
   onInstallUpdate,
   onOpenReleaseNotes,
@@ -122,25 +116,6 @@ export function WorkbenchHeader({
           onClick={onToggleRightPane}
           selected={rightPaneOpen}
         />
-
-        {/* "Check for updates" pill — shown when no update is pending */}
-        {!onDownloadUpdate && onCheckForUpdates && (
-          <div className="ms-1">
-            <button
-              type="button"
-              disabled={isCheckingForUpdates}
-              onClick={() => void onCheckForUpdates()}
-              aria-label="Check for updates"
-              className="flex items-center gap-1.5 overflow-hidden rounded-lg bg-linear-to-b from-blue-500 to-blue-700 px-2.5 py-[3px] text-[11px] font-medium text-white shadow-sm ring-1 ring-inset ring-white/20 hover:from-blue-400 hover:to-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:cursor-not-allowed disabled:opacity-70 [-webkit-app-region:no-drag]"
-            >
-              <RefreshCwIcon
-                className={cn("size-3", isCheckingForUpdates && "animate-spin")}
-                aria-hidden="true"
-              />
-              {isCheckingForUpdates ? "Checking…" : "Check for updates"}
-            </button>
-          </div>
-        )}
 
         {/* Update available dropdown — shown when an update is ready */}
         {onDownloadUpdate && onOpenReleaseNotes && (

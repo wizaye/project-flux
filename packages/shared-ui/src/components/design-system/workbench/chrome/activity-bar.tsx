@@ -19,6 +19,7 @@ export interface ActivityBarProps {
   theme: WorkbenchTheme;
   onActiveChange: (id: string) => void;
   onThemeChange: (theme: WorkbenchTheme) => void;
+  onSettings: () => void;
   onAccount?: () => void;
   className?: string;
 }
@@ -29,6 +30,7 @@ export function ActivityBar({
   theme,
   onActiveChange,
   onThemeChange,
+  onSettings,
   onAccount,
   className,
 }: ActivityBarProps) {
@@ -73,7 +75,7 @@ export function ActivityBar({
             onClick={onAccount}
           />
         ) : null}
-        <ThemeMenu theme={theme} onThemeChange={onThemeChange} />
+        <ThemeMenu theme={theme} onThemeChange={onThemeChange} onSettings={onSettings} />
       </footer>
     </aside>
   );

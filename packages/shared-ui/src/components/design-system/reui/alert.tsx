@@ -2,12 +2,20 @@ import type { ComponentProps } from "react";
 
 import { cn } from "#lib/utils";
 
-export function Alert({ className, ...props }: ComponentProps<"div">) {
+export function Alert({
+  className,
+  variant = "default",
+  ...props
+}: ComponentProps<"div"> & { variant?: "default" | "info" }) {
   return (
     <div
       role="status"
       data-slot="alert"
-      className={cn("grid grid-cols-[auto_minmax(0,1fr)_auto] gap-x-3 gap-y-1 rounded-lg border p-4 [&>svg]:mt-0.5 [&>svg]:size-4", className)}
+      className={cn(
+        "grid grid-cols-[auto_minmax(0,1fr)_auto] gap-x-3 gap-y-1 rounded-lg border p-4 [&>svg]:mt-0.5 [&>svg]:size-4",
+        variant === "info" && "bg-primary/5 [&>svg]:text-primary",
+        className
+      )}
       {...props}
     />
   );
