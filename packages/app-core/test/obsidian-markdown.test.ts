@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { GFM, parser } from "@lezer/markdown";
-import { obsidianMarkdownExtensions } from "../src/obsidian-markdown";
+import { obsidianMarkdownExtensions } from "../src/editor/obsidian-markdown";
 
 test("parses Obsidian and GFM syntax as semantic nodes", () => {
   const tree = parser.configure([...GFM, ...obsidianMarkdownExtensions]).parse(`

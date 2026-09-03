@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { FluxClient } from "@flux/bridge-contract";
 
-import { createClientStatePersistence } from "../src/client-state-persistence";
+import { createClientStatePersistence } from "../src/app/client-state-persistence";
 
 describe("client state persistence", () => {
   test("restores last window vault and validates workspace state", async () => {

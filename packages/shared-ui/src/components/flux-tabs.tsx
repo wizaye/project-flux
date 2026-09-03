@@ -111,7 +111,7 @@ export function FluxTab({
           data-active={active}
           data-pinned={pinned}
           className={cn(
-            "flux-tab flux-window-no-drag group/tab relative flex h-9 w-52 min-w-2 shrink items-center px-0.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+            "flux-tab flux-window-no-drag group/tab relative flex h-9 w-52 min-w-2 shrink items-center px-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
             active
               ? "z-10 min-w-12 max-w-52 text-foreground"
               : "max-w-52 text-muted-foreground hover:text-foreground",
@@ -158,14 +158,13 @@ export function FluxTab({
         >
           <div
             className={cn(
-              "flux-tab-content relative flex h-8 min-w-0 flex-1 items-center rounded-md px-2",
+              "flux-tab-content relative flex h-8 min-w-0 flex-1 items-center gap-1 rounded-md px-2",
               !active && "group-hover/tab:bg-[var(--tab-hover)]",
               active &&
                 "mx-0.5 bg-[var(--tab-active)] font-medium ring-1 ring-[var(--surface-ring)]",
-              (active || pinned || closeable) && "gap-1"
             )}
           >
-            <span className="min-w-0 flex-1 truncate text-left leading-5">
+            <span className="min-w-0 flex-1 truncate text-left leading-4">
               {children}
             </span>
             {pinned ? (

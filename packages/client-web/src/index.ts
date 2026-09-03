@@ -1,5 +1,10 @@
 import type {
+  AgentEvent,
+  AgentProvider,
+  AgentThread,
+  AgentTurn,
   AppBootstrap,
+  CreateAgentThreadRequest,
   CreateFileRequest,
   DocumentReferences,
   FileDocument,
@@ -19,6 +24,7 @@ import type {
   SaveResult,
   SearchResult,
   ServerStatus,
+  StartAgentTurnRequest,
   TrashEntry,
   TrashRetentionDays,
   VaultInfo,
@@ -110,9 +116,7 @@ export class WebFluxClient implements FluxClient {
   }
 
   getVaultConfig(vaultId: string) {
-    return this.request<Record<string, unknown>>(
-      `/vaults/${encodeURIComponent(vaultId)}/config`
-    );
+    return this.request<Record<string, unknown>>(`/vaults/${encodeURIComponent(vaultId)}/config`);
   }
 
   putVaultConfig(vaultId: string, value: Record<string, unknown>) {
@@ -168,6 +172,95 @@ export class WebFluxClient implements FluxClient {
     return this.request<import("@flux/bridge-contract").AIRuntime>(
       `/ai-runtimes/${encodeURIComponent(runtimeId)}`
     );
+  }
+
+  listAgentProviders() {
+    return this.request<AgentProvider[]>("/agent/providers");
+  }
+
+  createAgentThread(request: CreateAgentThreadRequest) {
+    return this.request<AgentThread>("/agent/threads", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  listAgentThreads(vaultId: string) {
+    const query = new URLSearchParams({ vaultId });
+    return this.request<AgentThread[]>(`/agent/threads?${query}`);
+  }
+
+  getAgentThread(threadId: string) {
+    return this.request<AgentThread>(`/agent/threads/${encodeURIComponent(threadId)}`);
+  }
+
+  renameAgentThread(threadId: string, title: string) {
+    return this.request<AgentThread>(`/agent/threads/${encodeURIComponent(threadId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    });
+  }
+
+  updateAgentThreadConfiguration(threadId: string, configuration: AgentThread["configuration"]) {
+    return this.request<AgentThread>(
+      `/agent/threads/${encodeURIComponent(threadId)}/configuration`,
+      { method: "PUT", body: JSON.stringify(configuration) }
+    );
+  }
+
+  listAgentEvents(threadId: string, afterSequence = 0) {
+    const query = new URLSearchParams({ after: String(afterSequence) });
+    return this.request<AgentEvent[]>(
+      `/agent/threads/${encodeURIComponent(threadId)}/events/history?${query}`
+    );
+  }
+
+  deleteAgentThread(threadId: string) {
+    return this.request<void>(`/agent/threads/${encodeURIComponent(threadId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  startAgentTurn(threadId: string, request: StartAgentTurnRequest) {
+    return this.request<AgentTurn>(`/agent/threads/${encodeURIComponent(threadId)}/turns`, {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  interruptAgentTurn(threadId: string, turnId: string) {
+    return this.request<void>(
+      `/agent/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}/interrupt`,
+      { method: "POST" }
+    );
+  }
+
+  respondAgentApproval(threadId: string, requestId: string, optionId: string) {
+    return this.request<void>(
+      `/agent/threads/${encodeURIComponent(threadId)}/approvals/${encodeURIComponent(requestId)}`,
+      { method: "POST", body: JSON.stringify({ optionId }) }
+    );
+  }
+
+  watchAgentThread(
+    threadId: string,
+    onEvent: (event: AgentEvent) => void,
+    onError?: (error: Error) => void,
+    afterSequence = 0
+  ) {
+    const query = new URLSearchParams({ after: String(afterSequence) });
+    const source = new EventSource(
+      `${this.baseURL}/agent/threads/${encodeURIComponent(threadId)}/events?${query}`
+    );
+    source.addEventListener("agent", (event) => {
+      try {
+        onEvent(JSON.parse((event as MessageEvent<string>).data) as AgentEvent);
+      } catch (error) {
+        onError?.(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    source.onerror = () => onError?.(new Error("Agent event stream disconnected"));
+    return () => source.close();
   }
 
   listPlugins() {

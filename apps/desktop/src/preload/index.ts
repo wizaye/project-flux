@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { VaultChange } from "@flux/bridge-contract";
+import type { AgentEvent, VaultChange } from "@flux/bridge-contract";
 
 let nextWatcherId = 0;
 
@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   ping: () => ipcRenderer.invoke("ping"),
   getWindowId: () => ipcRenderer.invoke("get-window-id"),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
+  showQuickCapture: () => ipcRenderer.invoke("show-quick-capture"),
   getMCPServerCommand: () => ipcRenderer.invoke("get-mcp-server-command"),
   onCommand: (handler: (command: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, command: string) => handler(command);
@@ -14,6 +15,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.off("flux-command", listener);
   },
   checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
+  downloadUpdate: () => ipcRenderer.invoke("download-update"),
+  installUpdate: () => ipcRenderer.invoke("install-update"),
+  onUpdateStatus: (handler: (status: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: unknown) => handler(status);
+    ipcRenderer.on("update-status", listener);
+    return () => ipcRenderer.off("update-status", listener);
+  },
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   getPerformanceStats: () => ipcRenderer.invoke("get-performance-stats"),
   setTheme: (theme: "dark" | "light" | "system") => ipcRenderer.invoke("set-native-theme", theme),
@@ -22,7 +30,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openWindow: (url: string) => ipcRenderer.invoke("open-window", url),
   onBeforeClose: (handler: () => Promise<void>) => {
     const listener = () => {
-      void handler().finally(() => ipcRenderer.send("flux-close-ready"));
+      void handler().then(
+        () => ipcRenderer.send("flux-close-ready"),
+        (error) => ipcRenderer.send("flux-close-failed", error instanceof Error ? error.message : "Could not save changes")
+      );
     };
     ipcRenderer.on("flux-before-close", listener);
     return () => ipcRenderer.off("flux-before-close", listener);
@@ -34,7 +45,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     marginMillimetres: number;
     scale: number;
   }) => ipcRenderer.invoke("export-pdf", options),
-  selectVaultDirectory: (mode: "open" | "create") =>
+  selectVaultDirectory: (mode: "open" | "create" | "location") =>
     ipcRenderer.invoke("select-vault-directory", mode),
   fluxFetch: (request: { url: string; method?: string; body?: string }) =>
     ipcRenderer.invoke("flux-fetch", request),
@@ -76,6 +87,27 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.off(revisionChannel, handleRevision);
       ipcRenderer.off(errorChannel, handleError);
       ipcRenderer.send("unwatch-vault-revision", watcherId);
+    };
+  },
+  watchAgentThread: (
+    threadId: string,
+    onEvent: (event: AgentEvent) => void,
+    onError?: (message: string) => void,
+    afterSequence = 0
+  ) => {
+    const watcherId = `${Date.now()}-${++nextWatcherId}`;
+    const eventChannel = `agent-event:${watcherId}`;
+    const errorChannel = `agent-event-error:${watcherId}`;
+    const handleEvent = (_event: Electron.IpcRendererEvent, payload: AgentEvent) =>
+      onEvent(payload);
+    const handleError = (_event: Electron.IpcRendererEvent, message: string) => onError?.(message);
+    ipcRenderer.on(eventChannel, handleEvent);
+    ipcRenderer.on(errorChannel, handleError);
+    ipcRenderer.send("watch-agent-thread", { watcherId, threadId, afterSequence });
+    return () => {
+      ipcRenderer.off(eventChannel, handleEvent);
+      ipcRenderer.off(errorChannel, handleError);
+      ipcRenderer.send("unwatch-agent-thread", watcherId);
     };
   },
 });

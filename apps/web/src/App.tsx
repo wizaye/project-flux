@@ -3,7 +3,6 @@ import { WebFluxClient } from "@flux/client-web";
 
 const client = new WebFluxClient();
 const statePersistence = createClientStatePersistence(client);
-
 const webRuntime: FluxRuntime = {
   label: "Web",
   client,
@@ -28,7 +27,7 @@ const webRuntime: FluxRuntime = {
     }
   },
   selectVaultDirectory: async (mode) => {
-    if (mode === "open") return null;
+    if (mode !== "create") return null;
     const name = window.prompt("Vault name")?.trim();
     if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\\")) {
       return null;

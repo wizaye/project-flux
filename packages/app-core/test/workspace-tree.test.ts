@@ -8,7 +8,7 @@ import {
   workspaceHasTab,
   workspaceLeaves,
   type WorkspaceNode,
-} from "../src/workspace-tree";
+} from "../src/workspace/tree";
 
 test("moving a split's last tab collapses its empty leaf", () => {
   const root: WorkspaceNode = {

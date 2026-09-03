@@ -10,21 +10,34 @@ import {
   Tray,
   type WebContents,
 } from "electron";
-import { autoUpdater } from "electron-updater";
+import { autoUpdater, type ProgressInfo, type UpdateInfo } from "electron-updater";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import * as path from "path";
+import { formatReleaseNotes } from "./update-notes";
+import { downloadMacUpdate, getPlatformInstaller, openMacInstaller } from "./installer";
+import { fetchMacRelease, isNewerVersion, type MacRelease } from "./github-release";
+
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = process.platform !== "darwin";
+if (!app.isPackaged) {
+  autoUpdater.forceDevUpdateConfig = true;
+}
 
 let mainWindow: BrowserWindow | null = null;
 let quickCaptureWindow: BrowserWindow | null = null;
 let menuBarTray: Tray | null = null;
 let backendProcess: ChildProcess | null = null;
-const vaultEventStreams = new Map<string, AbortController>();
+const eventStreams = new Map<string, AbortController>();
 const closeReadyWindows = new Set<number>();
 const closePendingWindows = new Set<number>();
 let quitAfterFlush = false;
 let allowQuit = false;
+let installUpdateAfterFlush = false;
+let latestUpdateInfo: UpdateInfo | MacRelease | null = null;
+let downloadedMacInstaller: string | null = null;
+let updateDownload: Promise<void> | null = null;
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -36,8 +49,58 @@ let backendHeartbeat: ReturnType<typeof setInterval> | null = null;
 let backendStartup: Promise<void> | null = null;
 const backendStartupAttempts = 300;
 
+type UpdateStatus =
+  | { state: "checking" }
+  | { state: "available"; update: ReturnType<typeof updateDetails> }
+  | { state: "not-available"; update: ReturnType<typeof updateDetails> }
+  | { state: "downloading"; percent: number; transferred: number; total: number }
+  | { state: "downloaded"; update: ReturnType<typeof updateDetails> }
+  | { state: "verifying"; update: ReturnType<typeof updateDetails> }
+  | { state: "ready"; update: ReturnType<typeof updateDetails> }
+  | { state: "installing"; update: ReturnType<typeof updateDetails> }
+  | { state: "error"; message: string };
+
+function updateDetails(info: UpdateInfo | MacRelease) {
+  return {
+    currentVersion: app.getVersion(),
+    latestVersion: info.version,
+    codename: info.releaseName || undefined,
+    releaseNotes: formatReleaseNotes(info.releaseNotes),
+  };
+}
+
+function sendUpdateStatus(status: UpdateStatus) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.webContents.isDestroyed()) window.webContents.send("update-status", status);
+  }
+}
+
+autoUpdater.on("checking-for-update", () => sendUpdateStatus({ state: "checking" }));
+autoUpdater.on("update-available", (info) => {
+  latestUpdateInfo = info;
+  sendUpdateStatus({ state: "available", update: updateDetails(info) });
+});
+autoUpdater.on("update-not-available", (info) =>
+  sendUpdateStatus({ state: "not-available", update: updateDetails(info) })
+);
+autoUpdater.on("download-progress", (progress: ProgressInfo) =>
+  sendUpdateStatus({
+    state: "downloading",
+    percent: progress.percent,
+    transferred: progress.transferred,
+    total: progress.total,
+  })
+);
+autoUpdater.on("update-downloaded", (info) => {
+  latestUpdateInfo = info;
+  sendUpdateStatus({ state: "downloaded", update: updateDetails(info) });
+});
+autoUpdater.on("error", (error) =>
+  sendUpdateStatus({ state: "error", message: error.message })
+);
+
 function fluxAppDataDirectory() {
-  return process.env.FLUX_APP_DATA_DIR ?? path.join(app.getPath("appData"), "Flux");
+  return process.env.FLUX_APP_DATA_DIR ?? path.join(app.getPath("appData"), app.isPackaged ? "Flux" : "Flux Development");
 }
 
 interface RuntimeDescriptor {
@@ -134,20 +197,18 @@ async function waitForRetry(signal: AbortSignal) {
   });
 }
 
-async function consumeVaultEvents(
+async function consumeServerEvents(
   sender: WebContents,
-  watcherId: string,
-  vaultId: string,
-  signal: AbortSignal
+  url: () => string,
+  signal: AbortSignal,
+  onFrame: (eventName: string | undefined, data: string) => void,
+  onError: (message: string) => void
 ) {
   while (!signal.aborted && !sender.isDestroyed()) {
     try {
-      const response = await fetch(
-        `${backendOrigin}/api/v1/vaults/${encodeURIComponent(vaultId)}/events`,
-        { signal, headers: backendHeaders() }
-      );
+      const response = await fetch(url(), { signal, headers: backendHeaders() });
       if (!response.ok || !response.body) {
-        throw new Error(`Vault event stream failed with status ${response.status}`);
+        throw new Error(`Event stream failed with status ${response.status}`);
       }
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -170,22 +231,60 @@ async function consumeVaultEvents(
             .filter((line) => line.startsWith("data:"))
             .map((line) => line.slice(5).trimStart())
             .join("\n");
-          if (eventName === "revision" && data) {
-            const payload = JSON.parse(data) as { revision?: unknown };
-            if (typeof payload.revision === "number" && !sender.isDestroyed()) {
-              sender.send(`vault-revision:${watcherId}`, payload);
-            }
-          }
+          if (data) onFrame(eventName, data);
           boundary = buffer.indexOf("\n\n");
         }
       }
     } catch (error) {
       if (signal.aborted || sender.isDestroyed()) return;
       const message = error instanceof Error ? error.message : String(error);
-      sender.send(`vault-revision-error:${watcherId}`, message);
+      onError(message);
     }
     await waitForRetry(signal);
   }
+}
+
+function consumeVaultEvents(
+  sender: WebContents,
+  watcherId: string,
+  vaultId: string,
+  signal: AbortSignal
+) {
+  return consumeServerEvents(
+    sender,
+    () => `${backendOrigin}/api/v1/vaults/${encodeURIComponent(vaultId)}/events`,
+    signal,
+    (eventName, data) => {
+      if (eventName !== "revision" || sender.isDestroyed()) return;
+      const payload = JSON.parse(data) as { revision?: unknown };
+      if (typeof payload.revision === "number") sender.send(`vault-revision:${watcherId}`, payload);
+    },
+    (message) => sender.send(`vault-revision-error:${watcherId}`, message)
+  );
+}
+
+function consumeAgentEvents(
+  sender: WebContents,
+  watcherId: string,
+  threadId: string,
+  afterSequence: number,
+  signal: AbortSignal
+) {
+  let sequence = afterSequence;
+  return consumeServerEvents(
+    sender,
+    () =>
+      `${backendOrigin}/api/v1/agent/threads/${encodeURIComponent(threadId)}/events?after=${sequence}`,
+    signal,
+    (eventName, data) => {
+      if (eventName !== "agent" || sender.isDestroyed()) return;
+      const payload = JSON.parse(data) as { sequence?: unknown };
+      if (typeof payload.sequence !== "number") return;
+      sequence = Math.max(sequence, payload.sequence);
+      sender.send(`agent-event:${watcherId}`, payload);
+    },
+    (message) => sender.send(`agent-event-error:${watcherId}`, message)
+  );
 }
 
 async function backendReady() {
@@ -205,8 +304,9 @@ async function ensureBackend() {
   }
 
   if (isDev) {
-    // Vite main-process reloads must recompile Go instead of reattaching the
-    // healthy daemon built from the previous source revision.
+    // In dev mode, try to reuse an already-running backend first.
+    // Only kill and restart if none is reachable (e.g. first run, or Go source changed).
+    if ((await attachPublishedBackend()) && (await backendReady())) return;
     await stopStalePublishedBackend(true);
   } else {
     if ((await attachPublishedBackend()) && (await backendReady())) return;
@@ -221,6 +321,7 @@ async function ensureBackend() {
     FLUX_APP_DATA_DIR: fluxAppDataDirectory(),
     FLUX_DESKTOP_TOKEN: "",
     FLUX_DAEMON_IDLE_TIMEOUT: "2m",
+    FLUX_VERSION: app.getVersion(),
   };
   if (isDev) {
     // Main-process reload restarts daemon, so go run recompiles backend changes.
@@ -249,9 +350,37 @@ async function ensureBackend() {
   throw new Error("FLUX backend did not become ready");
 }
 
+
+async function performUpdateInstallation() {
+  try {
+    const platform = getPlatformInstaller();
+    if (!latestUpdateInfo) throw new Error("No downloaded update is ready");
+    const update = updateDetails(latestUpdateInfo);
+    sendUpdateStatus({ state: "installing", update });
+    if (platform === "darwin") {
+      if (!downloadedMacInstaller) throw new Error("Verified DMG is missing");
+      await openMacInstaller(downloadedMacInstaller);
+      return;
+    }
+    autoUpdater.quitAndInstall(false, true);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Failed to install update:", error);
+    sendUpdateStatus({ state: "error", message });
+    allowQuit = false;
+    quitAfterFlush = false;
+    installUpdateAfterFlush = false;
+  }
+}
+
 function resumeQuitIfReady() {
   if (!quitAfterFlush || closePendingWindows.size > 0 || allowQuit) return;
   allowQuit = true;
+  if (installUpdateAfterFlush) {
+    // Start the async installation process without waiting
+    void performUpdateInstallation();
+    return;
+  }
   app.quit();
 }
 
@@ -273,8 +402,17 @@ function requestWindowFlush(window: BrowserWindow, windowId: number) {
   }
   closePendingWindows.add(windowId);
   window.webContents.send("flux-before-close");
-  const timeout = setTimeout(() => finishWindowFlush(window, windowId), 5_000);
+  const timeout = setTimeout(() => {
+    if (closePendingWindows.has(windowId)) cancelWindowFlush(windowId, "Saving is taking too long. Your window was kept open; try again after saving completes.");
+  }, 30_000);
   timeout.unref();
+}
+
+function cancelWindowFlush(windowId: number, message: string) {
+  closePendingWindows.delete(windowId);
+  quitAfterFlush = false;
+  installUpdateAfterFlush = false;
+  dialog.showErrorBox("Changes were not saved", message);
 }
 
 function createWindow(targetUrl?: string) {
@@ -296,17 +434,17 @@ function createWindow(targetUrl?: string) {
 
   if (process.platform === "darwin") {
     window.setWindowButtonVisibility(true);
-    window.setWindowButtonPosition({ x: 14, y: 16 });
+    window.setWindowButtonPosition({ x: 14, y: 10 });
   }
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      import('electron').then(({ shell }) => {
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      import("electron").then(({ shell }) => {
         shell.openExternal(url);
       });
-      return { action: 'deny' };
+      return { action: "deny" };
     }
-    return { action: 'allow' };
+    return { action: "allow" };
   });
 
   const loadWindowContent = () => {
@@ -397,7 +535,8 @@ function showMainWindow(command?: string) {
   if (process.platform === "darwin") app.dock?.show();
   const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow();
   const sendCommand = () => command && window.webContents.send("flux-command", command);
-  if (window.webContents.isLoadingMainFrame()) window.webContents.once("did-finish-load", sendCommand);
+  if (window.webContents.isLoadingMainFrame())
+    window.webContents.once("did-finish-load", sendCommand);
   else sendCommand();
   if (window.isMinimized()) window.restore();
   window.show();
@@ -456,12 +595,30 @@ function installApplicationMenu() {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       ...(process.platform === "darwin"
-        ? [{ label: app.name, submenu: [{ role: "about" as const }, { role: "quit" as const }] }]
+        ? [{
+            label: app.name,
+            submenu: [
+              { role: "about" as const },
+              { label: "Check for Updates…", click: () => dispatchCommand("updates") },
+              { type: "separator" as const },
+              { label: "Settings…", accelerator: "CmdOrCtrl+,", click: () => dispatchCommand("settings") },
+              { label: "Quick Capture", accelerator: "Control+Option+Space", click: showQuickCapture },
+              { type: "separator" as const },
+              { role: "services" as const },
+              { type: "separator" as const },
+              { role: "hide" as const },
+              { role: "hideOthers" as const },
+              { role: "unhide" as const },
+              { type: "separator" as const },
+              { role: "quit" as const },
+            ],
+          }]
         : []),
       {
         label: "File",
         submenu: [
           { label: "New Window", accelerator: "CmdOrCtrl+Shift+N", click: () => createWindow() },
+          { label: "Open or Create Vault…", accelerator: "CmdOrCtrl+O", click: () => dispatchCommand("vaults") },
           { label: "Quick Capture", accelerator: "Control+Alt+Space", click: showQuickCapture },
           { type: "separator" },
           { role: "close" },
@@ -470,7 +627,11 @@ function installApplicationMenu() {
       {
         label: "Navigate",
         submenu: [
-          { label: "Search", accelerator: "CmdOrCtrl+Shift+F", click: () => dispatchCommand("search") },
+          {
+            label: "Search",
+            accelerator: "CmdOrCtrl+Shift+F",
+            click: () => dispatchCommand("search"),
+          },
           { label: "Today's Note", click: () => dispatchCommand("daily-today") },
         ],
       },
@@ -478,7 +639,11 @@ function installApplicationMenu() {
         label: "Workspace",
         submenu: [
           { label: "Calendar", click: () => dispatchCommand("calendar") },
-          { label: "Settings", accelerator: "CmdOrCtrl+,", click: () => dispatchCommand("settings") },
+          {
+            label: "Settings",
+            accelerator: "CmdOrCtrl+,",
+            click: () => dispatchCommand("settings"),
+          },
         ],
       },
       { role: "editMenu" },
@@ -548,6 +713,8 @@ ipcMain.handle("hide-window", (event) => {
   BrowserWindow.fromWebContents(event.sender)?.hide();
 });
 
+ipcMain.handle("show-quick-capture", () => showQuickCapture());
+
 ipcMain.handle("get-mcp-server-command", () => {
   if (app.isPackaged) {
     return {
@@ -574,14 +741,20 @@ ipcMain.handle("get-mcp-server-command", () => {
 
 ipcMain.on("flux-close-ready", (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
-  if (!window || window.isDestroyed()) return;
+  if (!window || window.isDestroyed() || !closePendingWindows.has(event.sender.id)) return;
   finishWindowFlush(window, event.sender.id);
 });
 
+ipcMain.on("flux-close-failed", (event, message: unknown) => {
+  if (!closePendingWindows.has(event.sender.id)) return;
+  cancelWindowFlush(event.sender.id, typeof message === "string" ? message : "Could not save changes");
+});
+
 ipcMain.handle("select-vault-directory", async (_event, mode: unknown) => {
-  if (mode !== "open" && mode !== "create") throw new TypeError("Invalid vault selection mode");
+  if (mode !== "open" && mode !== "create" && mode !== "location") throw new TypeError("Invalid vault selection mode");
   const options = {
-    title: mode === "create" ? "Create or choose an empty vault folder" : "Open vault folder",
+    title: mode === "location" ? "Choose workspace location" : mode === "create" ? "Create or choose an empty vault folder" : "Open vault folder",
+    buttonLabel: mode === "location" ? "Choose location" : "Open",
     properties: ["openDirectory", "createDirectory"] as Array<"openDirectory" | "createDirectory">,
   };
   const result = await (mainWindow
@@ -629,13 +802,13 @@ ipcMain.on("watch-vault-revision", (event, request: unknown) => {
     return;
   }
   const key = streamKey(event.sender, value.watcherId);
-  vaultEventStreams.get(key)?.abort();
+  eventStreams.get(key)?.abort();
   const controller = new AbortController();
-  vaultEventStreams.set(key, controller);
+  eventStreams.set(key, controller);
   event.sender.once("destroyed", () => controller.abort());
   void consumeVaultEvents(event.sender, value.watcherId, value.vaultId, controller.signal).finally(
     () => {
-      if (vaultEventStreams.get(key) === controller) vaultEventStreams.delete(key);
+      if (eventStreams.get(key) === controller) eventStreams.delete(key);
     }
   );
 });
@@ -643,8 +816,44 @@ ipcMain.on("watch-vault-revision", (event, request: unknown) => {
 ipcMain.on("unwatch-vault-revision", (event, watcherId: unknown) => {
   if (typeof watcherId !== "string") return;
   const key = streamKey(event.sender, watcherId);
-  vaultEventStreams.get(key)?.abort();
-  vaultEventStreams.delete(key);
+  eventStreams.get(key)?.abort();
+  eventStreams.delete(key);
+});
+
+ipcMain.on("watch-agent-thread", (event, request: unknown) => {
+  if (!request || typeof request !== "object") return;
+  const value = request as { watcherId?: unknown; threadId?: unknown; afterSequence?: unknown };
+  if (
+    typeof value.watcherId !== "string" ||
+    value.watcherId.length > 100 ||
+    typeof value.threadId !== "string" ||
+    value.threadId.length > 100 ||
+    typeof value.afterSequence !== "number" ||
+    !Number.isSafeInteger(value.afterSequence) ||
+    value.afterSequence < 0
+  )
+    return;
+  const key = streamKey(event.sender, value.watcherId);
+  eventStreams.get(key)?.abort();
+  const controller = new AbortController();
+  eventStreams.set(key, controller);
+  event.sender.once("destroyed", () => controller.abort());
+  void consumeAgentEvents(
+    event.sender,
+    value.watcherId,
+    value.threadId,
+    value.afterSequence,
+    controller.signal
+  ).finally(() => {
+    if (eventStreams.get(key) === controller) eventStreams.delete(key);
+  });
+});
+
+ipcMain.on("unwatch-agent-thread", (event, watcherId: unknown) => {
+  if (typeof watcherId !== "string") return;
+  const key = streamKey(event.sender, watcherId);
+  eventStreams.get(key)?.abort();
+  eventStreams.delete(key);
 });
 
 ipcMain.handle("export-pdf", async (event, options: unknown) => {
@@ -681,7 +890,7 @@ ipcMain.handle("export-pdf", async (event, options: unknown) => {
   if (result.canceled || !result.filePath) return null;
   const data = await event.sender.printToPDF({
     scale: value.scale,
-    printBackground: false,
+    printBackground: true,
     preferCSSPageSize: true,
     generateTaggedPDF: true,
     generateDocumentOutline: true,
@@ -691,15 +900,63 @@ ipcMain.handle("export-pdf", async (event, options: unknown) => {
 });
 
 ipcMain.handle("check-for-updates", async () => {
-  if (app.isPackaged) {
-    try {
-      await autoUpdater.checkForUpdatesAndNotify();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { isDev, isPackaged: true, error: message };
+  if (updateDownload && latestUpdateInfo) return updateDetails(latestUpdateInfo);
+  const currentVersion = app.getVersion();
+  try {
+    if (process.platform === "darwin") {
+      sendUpdateStatus({ state: "checking" });
+      const release = await fetchMacRelease(process.arch);
+      latestUpdateInfo = release && isNewerVersion(release.version, currentVersion) ? release : null;
+      const update = release ? updateDetails(release) : { currentVersion, latestVersion: currentVersion, codename: undefined, releaseNotes: "" };
+      sendUpdateStatus({ state: latestUpdateInfo ? "available" : "not-available", update });
+      return update;
     }
+    const result = await autoUpdater.checkForUpdates();
+    return result?.updateInfo ? updateDetails(result.updateInfo) : { currentVersion };
+  } catch (error) {
+    console.error("Failed to check for updates (maybe no GitHub releases yet):", error);
+    sendUpdateStatus({ state: "error", message: error instanceof Error ? error.message : "Update check failed" });
+    throw error;
   }
-  return { isDev, isPackaged: app.isPackaged };
+});
+
+async function downloadUpdate() {
+  if (!latestUpdateInfo) throw new Error("Check for updates before downloading");
+  const update = updateDetails(latestUpdateInfo);
+  sendUpdateStatus({ state: "downloading", percent: 0, transferred: 0, total: "asset" in latestUpdateInfo ? latestUpdateInfo.asset.size : 0 });
+  try {
+    if (process.platform === "darwin") {
+      if (!("asset" in latestUpdateInfo)) throw new Error("Check for a DMG update first");
+      downloadedMacInstaller = await downloadMacUpdate(latestUpdateInfo, (percent, transferred, total) =>
+        sendUpdateStatus({ state: "downloading", percent, transferred, total })
+      );
+    } else {
+      await autoUpdater.downloadUpdate();
+    }
+    sendUpdateStatus({ state: "verifying", update });
+    sendUpdateStatus({ state: "ready", update });
+  } catch (error) {
+    sendUpdateStatus({ state: "error", message: error instanceof Error ? error.message : "Update download failed" });
+    throw error;
+  }
+}
+
+ipcMain.handle("download-update", () => {
+  updateDownload ??= downloadUpdate().finally(() => { updateDownload = null; });
+  return updateDownload;
+});
+
+ipcMain.handle("install-update", () => {
+  installUpdateAfterFlush = true;
+  quitAfterFlush = true;
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window === quickCaptureWindow) {
+      window.destroy();
+      continue;
+    }
+    requestWindowFlush(window, window.webContents.id);
+  }
+  resumeQuitIfReady();
 });
 
 ipcMain.handle("get-app-version", async () => {

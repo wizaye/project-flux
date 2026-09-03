@@ -1,0 +1,4 @@
+provider: github
+owner: wizaye
+repo: project-flux
+releaseType: release

@@ -1,0 +1,82 @@
+# Flux — Self-Hosted Deployment
+#
+# Usage:
+#   cp .env.selfhost .env
+#   # Edit PUBLIC_URL (and WEB_PORT if needed) in .env
+#   docker compose -f docker-compose.selfhost.yml up -d
+#
+# Update:
+#   docker compose -f docker-compose.selfhost.yml pull
+#   docker compose -f docker-compose.selfhost.yml up -d --build
+#
+# Backup vault data:
+#   docker run --rm -v flux-vaults:/data -v $(pwd):/backup \
+#     alpine tar czf /backup/flux-vaults-backup.tar.gz /data
+
+name: flux-selfhost
+
+services:
+  # ── Go API backend ─────────────────────────────────────────────────────────
+  flux-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: flux-server
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      HOST: 0.0.0.0
+      PORT: 8080
+      FLUX_VAULT_ROOT: /data/vaults
+      FLUX_APP_DATA_DIR: /data/appdata
+      # Set CORS to the public URL so the Nginx container can call the API
+      CORS_ALLOWED_ORIGIN: ${PUBLIC_URL:-http://localhost:3000}
+      # Plugin registry (optional — leave blank to disable marketplace)
+      FLUX_PLUGIN_REGISTRY_URL: ${FLUX_PLUGIN_REGISTRY_URL:-}
+      FLUX_PLUGIN_REGISTRY_SIGNATURE_URL: ${FLUX_PLUGIN_REGISTRY_SIGNATURE_URL:-}
+      FLUX_PLUGIN_REGISTRY_PUBLIC_KEY: ${FLUX_PLUGIN_REGISTRY_PUBLIC_KEY:-}
+    volumes:
+      - flux-vaults:/data/vaults
+      - flux-appdata:/data/appdata
+    networks:
+      - flux-internal
+    # Not exposed to the host directly — Nginx proxies /api/* to it
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+  # ── React/Vite web frontend served by Nginx ────────────────────────────────
+  flux-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: flux-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    networks:
+      - flux-internal
+    depends_on:
+      flux-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+volumes:
+  flux-vaults:
+    driver: local
+  flux-appdata:
+    driver: local
+
+# ── Internal bridge network ────────────────────────────────────────────────────
+networks:
+  flux-internal:
+    driver: bridge

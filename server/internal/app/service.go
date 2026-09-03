@@ -17,7 +17,7 @@ import (
 	"github.com/flux-pkm/server/internal/vault"
 )
 
-const Version = "0.0.1"
+var Version = "0.0.1"
 
 var ErrInvalidVaultPlan = errors.New("invalid vault plan")
 

@@ -15,7 +15,7 @@ import { cn } from "../lib/utils";
 import {
   ContextMenu,
   ContextMenuItem,
-  ContextMenuPopup,
+  ContextMenuContent,
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "./ui/context-menu";
@@ -203,9 +203,9 @@ export function FluxTabContextMenu({ children, ...commands }: FluxTabContextMenu
   return (
     <ContextMenu>
       <ContextMenuTrigger render={<div className="contents" />}>{children}</ContextMenuTrigger>
-      <ContextMenuPopup className="z-[110] min-w-52">
+      <ContextMenuContent className="z-[110] min-w-52">
         <ContextCommands {...commands} />
-      </ContextMenuPopup>
+      </ContextMenuContent>
     </ContextMenu>
   );
 }

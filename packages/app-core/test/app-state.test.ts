@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { browserStatePersistence, useAppStore } from "../src/app-state";
+import { browserStatePersistence, useAppStore } from "../src/app/state";
 
 describe("app state", () => {
   beforeEach(() => {

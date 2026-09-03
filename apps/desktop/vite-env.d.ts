@@ -5,13 +5,18 @@ interface Window {
     ping: () => Promise<string>;
     getWindowId: () => Promise<string>;
     hideWindow: () => Promise<void>;
+    showQuickCapture: () => Promise<void>;
     getMCPServerCommand: () => Promise<{ command: string; args: string[] }>;
     onCommand: (handler: (command: string) => void) => () => void;
     checkForUpdates: () => Promise<{
-      isDev: boolean;
-      isPackaged: boolean;
-      error?: string;
+      currentVersion: string;
+      latestVersion?: string;
+      releaseNotes?: string;
+      codename?: string;
     }>;
+    downloadUpdate: () => Promise<void>;
+    installUpdate: () => Promise<void>;
+    onUpdateStatus: (handler: (status: import("@flux/app-core").UpdateRuntimeStatus) => void) => () => void;
     getAppVersion: () => Promise<string>;
     getPerformanceStats: () => Promise<{
       cpuPercent: number;
@@ -28,7 +33,7 @@ interface Window {
       marginMillimetres: number;
       scale: number;
     }) => Promise<string | null>;
-    selectVaultDirectory: (mode: "open" | "create") => Promise<string | null>;
+    selectVaultDirectory: (mode: "open" | "create" | "location") => Promise<string | null>;
     fluxFetch: (request: {
       url: string;
       method?: string;
@@ -43,6 +48,12 @@ interface Window {
       vaultId: string,
       onChange: (change: import("@flux/bridge-contract").VaultChange) => void,
       onError?: (message: string) => void
+    ) => () => void;
+    watchAgentThread: (
+      threadId: string,
+      onEvent: (event: import("@flux/bridge-contract").AgentEvent) => void,
+      onError?: (message: string) => void,
+      afterSequence?: number
     ) => () => void;
   };
 }
